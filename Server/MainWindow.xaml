@@ -1,0 +1,40 @@
+﻿<Window x:Class="WpfTcpServer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="1984" Height="400" Width="908">
+
+    <Grid>
+        <ListView x:Name="ClientsListView" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            <ListView.Resources>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="Background" Value="#F7F9FC"/>
+                    <Setter Property="Foreground" Value="#000000"/>
+                    <Setter Property="Margin" Value="2"/>
+                    <Setter Property="Padding" Value="5"/>
+                    <Setter Property="BorderThickness" Value="0"/>
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                </Style>
+            </ListView.Resources>
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="IP" DisplayMemberBinding="{Binding IP}" Width="150"/>
+                    <GridViewColumn Header="User Name" DisplayMemberBinding="{Binding UserName}" Width="150"/>
+                    <GridViewColumn Header="Domain Name" DisplayMemberBinding="{Binding DomainName}" Width="150"/>
+                    <GridViewColumn Header="Host Name" DisplayMemberBinding="{Binding HostName}" Width="150"/>
+                    <GridViewColumn Header="Last Active Time" DisplayMemberBinding="{Binding LastActiveTime}" Width="150"/>
+                    <GridViewColumn Header="Actions" Width="150">
+                        <GridViewColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Content="Запросить скриншот" 
+                                        Click="RequestScreenshotButton_Click" 
+                                        Tag="{Binding IP}"/>
+                            </DataTemplate>
+                        </GridViewColumn.CellTemplate>
+                    </GridViewColumn>
+                </GridView>
+            </ListView.View>
+        </ListView>
+    </Grid>
+</Window>
+    
+ 
