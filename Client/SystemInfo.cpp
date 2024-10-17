@@ -23,6 +23,8 @@ namespace EmployeeMonitoring
 
 	void SystemInfo::CollectInfo()
 	{
+		///////////////////////////////////////////////////////
+		//Имя пользователя
 		char buffer[UNLEN + 1];
 
 		DWORD size = sizeof(buffer);
@@ -30,9 +32,11 @@ namespace EmployeeMonitoring
 		GetUserNameA(buffer, &size);
 
 		_user_name = buffer;
+		
 
 
-
+		///////////////////////////////////////////////////////
+		//Хост
 		WSADATA wsaData;
 
 		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
@@ -53,13 +57,15 @@ namespace EmployeeMonitoring
 
 
 
+		///////////////////////////////////////////////////////
+		//Домен
 		struct addrinfo hints, * info;
 		ZeroMemory(&hints, sizeof(hints));
+
 		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_STREAM;
 		hints.ai_flags = AI_CANONNAME;
-
-
+		
 		if (getaddrinfo(hostname, NULL, &hints, &info) != 0)
 		{
 			std::cerr << WSAGetLastError() << std::endl;
@@ -70,6 +76,8 @@ namespace EmployeeMonitoring
 
 
 
+		///////////////////////////////////////////////////////
+		//IP
 		for (struct addrinfo* p = info; p != nullptr; p = p->ai_next)
 		{
 			if (p->ai_family == AF_INET)
@@ -86,8 +94,13 @@ namespace EmployeeMonitoring
 			}
 		}
 
-		freeaddrinfo(info);
 
+
+		///////////////////////////////////////////////////////
+		//Время запуска
+		SetNowTime();
+
+		freeaddrinfo(info);
 		WSACleanup();
 	}
 
@@ -108,46 +121,48 @@ namespace EmployeeMonitoring
 		return result;
 	}
 
+	void SystemInfo::SetNowTime()
+	{
+		std::time_t now = std::time(nullptr);
 
+		std::tm tm;
+
+		localtime_s(&tm, &now);
+
+		std::ostringstream oss;
+
+		oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+
+		_last_active_time = oss.str();
+	}
 
 	void SystemInfo::StartActivityMonitor()
 	{
 		_monitorThread = std::thread([this]()
+		{
+			while (_thread_flag)
 			{
-				while (_thread_flag)
+				if (IsUserActive())
 				{
-					if (IsUserActive())
-					{
-						std::time_t now = std::time(nullptr);
+					SetNowTime();
 
-						std::tm tm;
+					_is_changed = true;
 
-						localtime_s(&tm, &now);
-
-						std::ostringstream oss;
-
-						oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-
-						_last_active_time = oss.str();
-
-						_is_changed = true;
-
-						std::this_thread::sleep_for(std::chrono::milliseconds(500));
-					}
+					std::this_thread::sleep_for(std::chrono::milliseconds(500));
 				}
-			});
+			}
+		});
 	}
 
 	bool SystemInfo::IsUserActive()
 	{
 		LASTINPUTINFO last_input;
-
 		last_input.cbSize = sizeof(LASTINPUTINFO);
-
 		GetLastInputInfo(&last_input);
 
-		DWORD currentTime = GetTickCount64();
+		ULONGLONG currentTime = GetTickCount64();
+		ULONGLONG lastInputTime = last_input.dwTime;
 
-		return (currentTime - last_input.dwTime) < 100;
+		return (currentTime - lastInputTime) < 500;
 	}
 }

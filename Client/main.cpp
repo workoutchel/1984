@@ -1,15 +1,32 @@
 #include "MainClient.hpp"
 
 
-
-int main()
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//	Если необходимо включить отображение консоли для отладки, необходимо строку 
+//	int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+//	поменять на int main()
+//	Затем выбрать Client -> Свойства -> Компоновщик -> Система -> Подсистема
+//	Параметр Windows (/SUBSYSTEM:WINDOWS) 
+//	Поменять на Консоль (/SUBSYSTEM:CONSOLE)
+//	
+_Use_decl_annotations_
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
-	///////////////////////////////////////////////////////////////////////
-	//
-	//					  СЮДА НЕОБХОДИМО ПОДСТАВИТЬ ЛОКАЛЬНЫЙ АЙПИ СЕРВЕРА
-	//											|
-	//											↓
-	EmployeeMonitoring::MainClient client("192.168.1.70", 1337);
+	while (true)
+	{
+		////////////////////////////////////////////////////////////////////////////////////////////////////
+		//
+		//	Вставить сюда необходимые порты(один для отслеживания активности, второй для передачи скриншота) и IP сервера в локальной сети
+		//										   |
+		//										   ↓
+		EmployeeMonitoring::MainClient client(1337, 1338, "");
 
-	client.Start();
+		client.AddToStartup();
+
+		client.Start();
+	}
 }
+
+
+

@@ -2,6 +2,7 @@
 
 #include "NetworkManager.hpp"
 #include "SystemInfo.hpp"
+#include <tchar.h> 
 
 
 
@@ -11,17 +12,18 @@ namespace EmployeeMonitoring
 	{
 	public:
 
-		void Start();
-
-		MainClient(const std::string& ip, int port);
+		MainClient(int port_data, int port_screen, const char* ip);
 
 		~MainClient();
 
+		void AddToStartup();
+
+		void Start();
 
 	private:
 
-		NetworkManager* networkManagerPtr;
+		NetworkManager* _NetworkManagerPtr;
 
-		SystemInfo* systemInfoPtr;
+		SystemInfo* _SystemInfoPtr;
 	};
 }
