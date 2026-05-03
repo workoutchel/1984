@@ -2,7 +2,7 @@
 
 
 
-namespace EmployeeMonitoring
+namespace Client
 {
     NetworkManager::NetworkManager(int port_data, int port_screen, const char* ip) : _port_data(port_data), _port_screen(port_screen), _ip(ip), _sock_data(INVALID_SOCKET), _sock_screen(INVALID_SOCKET), _ScreenshotManagerPtr(new ScreenshotManager())
     {
@@ -146,14 +146,3 @@ namespace EmployeeMonitoring
         send(_sock_data, data.c_str(), static_cast<int>(data.size()), 0);
     }
 }
-
-
-
-
-
-
-
-
-
-
-

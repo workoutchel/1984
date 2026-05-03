@@ -12,7 +12,7 @@
 #pragma comment(lib, "Ws2_32.lib")
 
 
-namespace EmployeeMonitoring
+namespace Client
 {
     class NetworkManager
     {

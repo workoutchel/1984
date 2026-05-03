@@ -2,9 +2,9 @@
 
 
 
-namespace EmployeeMonitoring
+namespace Client
 {
-	MainClient::MainClient(int port_data, int port_screen, const char* ip) : _NetworkManagerPtr(new NetworkManager(port_data, port_screen, ip)), _SystemInfoPtr(new SystemInfo())
+	MainClient::MainClient(const int port_data, const int port_screen, const char* ip) : _NetworkManagerPtr(new NetworkManager(port_data, port_screen, ip)), _SystemInfoPtr(new SystemInfo())
 	{}
 
 	MainClient::~MainClient() 
@@ -54,7 +54,7 @@ namespace EmployeeMonitoring
 			std::cerr << "Ошибка при подключению по порту:" << _NetworkManagerPtr->GetScreenPort() << std::endl;
 		}
 
-		else
+		else	
 		{
 			std::thread screenshotThread(&NetworkManager::WaitForScreenshotRequest, _NetworkManagerPtr);
 

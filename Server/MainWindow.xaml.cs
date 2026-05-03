@@ -26,7 +26,7 @@ namespace WpfTcpServer
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
         {
             throw new NotImplementedException();
-        }
+        }       
     }
 
 
@@ -37,6 +37,8 @@ namespace WpfTcpServer
 
         private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
 
+        private readonly DatabaseManager _db = new DatabaseManager();
+
         private TcpListener? ListenerData;
         private TcpListener? ListenerScreen;
 
@@ -45,13 +47,10 @@ namespace WpfTcpServer
             InitializeComponent();
             ClientsListView.ItemsSource = _clients;
 
-            ////////////////////////////////////////////////////////////////////////////////////////////////////
-            //
-            //	Вставить сюда необходимые порты(один для отслеживания активности, второй для передачи скриншота)
-            //			     |						  
-            //			     ↓							  
+
             StartServer(1337, 1338);
         }
+    
 
 
 
@@ -101,17 +100,20 @@ namespace WpfTcpServer
 
                     ClientInfo clientInfo = ClientInfo.ParseClientInfo(clientData);
 
+                    int workstationId = await _db.AddOrUpdateWorkstationAsync(clientInfo);
+                    await _db.AddActivityEventAsync(workstationId, clientInfo.LastActiveTime);
+
                     App.Current.Dispatcher.Invoke(() =>
                     {
                         var existingClient = _clients.FirstOrDefault(c => c.IP == clientInfo.IP);
 
                         if (existingClient != null)
                         {
-                            existingClient.Connect(tcpClientData, tcpClientScreen);
+                            existingClient.Connect(tcpClientData, tcpClientScreen, workstationId, _db);
                         }
                         else
                         {
-                            clientInfo.Connect(tcpClientData, tcpClientScreen);
+                            clientInfo.Connect(tcpClientData, tcpClientScreen, workstationId, _db);
                             _clients.Add(clientInfo);
                         }
                     });
@@ -152,5 +154,3 @@ namespace WpfTcpServer
         }
     }
 }
-
-

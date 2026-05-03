@@ -7,7 +7,7 @@
 
 
 
-namespace EmployeeMonitoring
+namespace Client
 {
 
 	class ScreenshotManager

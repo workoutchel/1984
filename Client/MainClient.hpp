@@ -6,7 +6,7 @@
 
 
 
-namespace EmployeeMonitoring
+namespace Client
 {
 	class MainClient
 	{

@@ -2,7 +2,7 @@
 
 
 
-namespace EmployeeMonitoring
+namespace Client
 {
 	ScreenshotManager::ScreenshotManager() 
 	{

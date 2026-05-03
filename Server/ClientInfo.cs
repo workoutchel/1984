@@ -16,12 +16,15 @@ namespace Server
 
         public bool IsConnected { get; private set; }
 
+        public int WorkstationId { get; private set; }
 
         public TcpClient? DataClient { get; private set; }
         public NetworkStream? DataStream { get; private set; }
 
         public TcpClient? ScreenClient { get; private set; }
         public NetworkStream? ScreenStream { get; private set; }
+
+        private DatabaseManager? _db;
 
 
 
@@ -42,8 +45,11 @@ namespace Server
         }
 
 
-        public void Connect(TcpClient tcpClientData, TcpClient tcpClientScreen)
+        public void Connect(TcpClient tcpClientData, TcpClient tcpClientScreen, int workstationId, DatabaseManager db)
         {
+            WorkstationId = workstationId;
+            _db = db;
+
             DataClient = tcpClientData;
             DataStream = DataClient.GetStream();
 
@@ -77,7 +83,14 @@ namespace Server
 
                             if (parts.Length > 4)
                             {
-                                UpdateLastActiveTime(parts[4].Trim());
+                                string lastActiveTime = parts[4].Trim();
+
+                                UpdateLastActiveTime(lastActiveTime);
+
+                                if (_db != null)
+                                {
+                                    await _db.AddActivityEventAsync(WorkstationId, lastActiveTime);
+                                }
                             }
                         }
                     }
@@ -210,7 +223,6 @@ namespace Server
             IsConnected = false;
             OnPropertyChanged(nameof(IsConnected));
         }
-
 
 
         public event PropertyChangedEventHandler? PropertyChanged;

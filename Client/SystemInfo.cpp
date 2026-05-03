@@ -2,7 +2,7 @@
 
 
 
-namespace EmployeeMonitoring
+namespace Client
 {
 	SystemInfo::SystemInfo() : _thread_flag(true), _is_changed(true)
 	{

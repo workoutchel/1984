@@ -20,13 +20,11 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		//	Вставить сюда необходимые порты(один для отслеживания активности, второй для передачи скриншота) и IP сервера в локальной сети
 		//										   |
 		//										   ↓
-		EmployeeMonitoring::MainClient client(1337, 1338, "");
+		//EmployeeMonitoring::MainClient client(1337, 1338, "192.168.1.73");
+		Client::MainClient client(1337, 1338, "10.66.66.2");
 
-		client.AddToStartup();
+		//client.AddToStartup();
 
 		client.Start();
 	}
 }
-
-
-
