@@ -165,6 +165,24 @@ namespace Server
                 return;
             }
 
+            string screenshotsDir = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "screenshots",
+                WorkstationId.ToString()
+            );
+
+            Directory.CreateDirectory(screenshotsDir);
+
+            string fileName = $"{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.png";
+            string filePath = Path.Combine(screenshotsDir, fileName);
+
+            await File.WriteAllBytesAsync(filePath, imageBuffer);
+
+            if (_db != null)
+            {
+                await _db.AddScreenshotAsync(WorkstationId, filePath);
+            }
+
             try
             {
                 BitmapImage bitmapImage;

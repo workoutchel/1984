@@ -15,7 +15,8 @@ namespace Server
         private class ActivityPeriodRow
         {
             public int Id { get; set; }
-            public string PeriodType { get; set; } = "";
+            public int PeriodTypeId { get; set; }
+            public string PeriodTypeName { get; set; } = "";
             public DateTime StartTime { get; set; }
             public DateTime? EndTime { get; set; }
         }
@@ -70,14 +71,14 @@ namespace Server
             );
 
             string activitySql = @"
-        INSERT INTO activity_events 
-            (workstation_id, last_active_time)
-        VALUES 
-            (@WorkstationId, @LastActiveTime)
-        ON CONFLICT (workstation_id)
-        DO UPDATE SET 
-            last_active_time = EXCLUDED.last_active_time;
-    ";
+            INSERT INTO activity_events 
+                (workstation_id, last_active_time)
+            VALUES 
+                (@WorkstationId, @LastActiveTime)
+            ON CONFLICT (workstation_id)
+            DO UPDATE SET 
+                last_active_time = EXCLUDED.last_active_time;
+            ";
 
             await connection.ExecuteAsync(activitySql, new
             {
@@ -91,28 +92,30 @@ namespace Server
         }
 
         private async Task UpdateActivityPeriodsAsync(
-    NpgsqlConnection connection,
-    NpgsqlTransaction transaction,
-    int workstationId,
-    DateTime eventTime)
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            int workstationId,
+            DateTime eventTime)
         {
             string selectSql = @"
-        SELECT 
-            id AS Id,
-            period_type AS PeriodType,
-            start_time AS StartTime,
-            end_time AS EndTime
-        FROM activity_periods
-        WHERE workstation_id = @WorkstationId
-        ORDER BY start_time DESC, id DESC
-        LIMIT 1;
-    ";
+                SELECT 
+                    ap.id AS Id,
+                    ap.period_type_id AS PeriodTypeId,
+                    apt.name AS PeriodTypeName,
+                    ap.start_time AS StartTime,
+                    ap.end_time AS EndTime
+                FROM activity_periods ap
+                JOIN activity_period_types apt ON ap.period_type_id = apt.id
+                WHERE ap.workstation_id = @WorkstationId
+                ORDER BY ap.start_time DESC, ap.id DESC
+                LIMIT 1;
+            ";
 
             ActivityPeriodRow? lastPeriod = await connection.QueryFirstOrDefaultAsync<ActivityPeriodRow>(
                 selectSql,
                 new { WorkstationId = workstationId },
                 transaction
-            );
+            );  
 
             if (lastPeriod == null)
             {
@@ -127,7 +130,7 @@ namespace Server
 
             int gapSeconds = (int)(eventTime - previousEndTime).TotalSeconds;
 
-            if (lastPeriod.PeriodType == "active")
+            if (lastPeriod.PeriodTypeName == "active")
             {
                 if (gapSeconds <= IdleThresholdSeconds)
                 {
@@ -139,7 +142,7 @@ namespace Server
                     await CreatePeriodAsync(connection, transaction, workstationId, "active", eventTime, eventTime);
                 }
             }
-            else if (lastPeriod.PeriodType == "idle")
+            else if (lastPeriod.PeriodTypeName == "idle")
             {
                 await UpdatePeriodEndAsync(connection, transaction, lastPeriod.Id, eventTime, lastPeriod.StartTime);
                 await CreatePeriodAsync(connection, transaction, workstationId, "active", eventTime, eventTime);
@@ -157,10 +160,16 @@ namespace Server
             int durationSeconds = (int)(endTime - startTime).TotalSeconds;
 
             string sql = @"
-            INSERT INTO activity_periods
-                (workstation_id, period_type, start_time, end_time, duration_seconds)
-            VALUES
-                (@WorkstationId, @PeriodType, @StartTime, @EndTime, @DurationSeconds);
+                INSERT INTO activity_periods
+                    (workstation_id, period_type_id, start_time, end_time, duration_seconds)
+                VALUES
+                    (
+                        @WorkstationId,
+                        (SELECT id FROM activity_period_types WHERE name = @PeriodType),
+                        @StartTime,
+                        @EndTime,
+                        @DurationSeconds
+                    );
             ";
 
             await connection.ExecuteAsync(sql, new
@@ -196,6 +205,25 @@ namespace Server
                 EndTime = endTime,
                 DurationSeconds = durationSeconds
             }, transaction);
+        }
+
+        public async Task AddScreenshotAsync(int workstationId, string filePath)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+            INSERT INTO screenshots
+                (workstation_id, file_path, created_at)
+            VALUES
+                (@WorkstationId, @FilePath, CURRENT_TIMESTAMP);
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                WorkstationId = workstationId,
+                FilePath = filePath
+            });
         }
 
 
