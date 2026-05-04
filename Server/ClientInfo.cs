@@ -5,7 +5,7 @@ using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Imaging;
-
+using System.Net.Security;
 
 
 
@@ -28,7 +28,7 @@ namespace WpfTcpServer
         public int ProcessId { get; private set; }
 
         public TcpClient? DataClient { get; private set; }
-        public NetworkStream? DataStream { get; private set; }
+        public Stream? DataStream { get; private set; }
 
         public TcpClient? ScreenClient { get; private set; }
         public NetworkStream? ScreenStream { get; private set; }
@@ -98,13 +98,18 @@ namespace WpfTcpServer
         }
 
 
-        public void Connect(TcpClient tcpClientData, TcpClient tcpClientScreen, int workstationId, DatabaseManager db)
+        public void Connect(
+            TcpClient tcpClientData,
+            Stream dataStream,
+            TcpClient tcpClientScreen,
+            int workstationId,
+            DatabaseManager db)
         {
             WorkstationId = workstationId;
             _db = db;
 
             DataClient = tcpClientData;
-            DataStream = DataClient.GetStream();
+            DataStream = dataStream;
 
             ScreenClient = tcpClientScreen;
             ScreenStream = tcpClientScreen.GetStream();

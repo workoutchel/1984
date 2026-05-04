@@ -1,6 +1,7 @@
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
+#define SECURITY_WIN32
 
 #include "ScreenshotManager.hpp"
 
@@ -8,8 +9,12 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <schannel.h>
+#include <security.h>
 
 #pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "Secur32.lib")
+#pragma comment(lib, "Crypt32.lib")
 
 
 namespace Client
@@ -41,17 +46,25 @@ namespace Client
 
     private:
 
-        std::atomic<bool> is_connected;
+        bool InitializeTlsForDataSocket();
+
+        bool SendTlsData(const std::string& data) const;
 
         const char* _ip;
 
+        bool _tlsInitialized = false;
 
         int _port_data;
-
-        SOCKET _sock_data;
-
         int _port_screen;
 
+        std::atomic<bool> is_connected;
+
+        CredHandle _credHandle;
+        CtxtHandle _contextHandle;
+
+        SecPkgContext_StreamSizes _streamSizes;
+
+        SOCKET _sock_data;
         SOCKET _sock_screen;
 
         ScreenshotManager* _ScreenshotManagerPtr;

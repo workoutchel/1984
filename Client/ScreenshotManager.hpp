@@ -3,6 +3,7 @@
 #include <objidl.h>
 #include <GdiPlus.h>
 
+
 #pragma comment(lib, "GdiPlus.lib")
 
 
@@ -24,6 +25,6 @@ namespace Client
 
 		int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 
-		ULONG_PTR gdiplusToken;
+		ULONG_PTR _gdiplusToken;
 	};
 }

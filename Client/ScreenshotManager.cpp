@@ -7,12 +7,12 @@ namespace Client
 	ScreenshotManager::ScreenshotManager() 
 	{
 		Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-		Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+		Gdiplus::GdiplusStartup(&_gdiplusToken, &gdiplusStartupInput, NULL);
 	}
 
 	ScreenshotManager::~ScreenshotManager()
 	{
-		Gdiplus::GdiplusShutdown(gdiplusToken);
+		Gdiplus::GdiplusShutdown(_gdiplusToken);
 	}
 
 

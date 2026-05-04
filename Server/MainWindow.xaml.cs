@@ -6,6 +6,8 @@ using System.Net.Sockets;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Security.Cryptography.X509Certificates;
+using System.Net.Security;
 
 
 
@@ -44,7 +46,7 @@ namespace WpfTcpServer
         private TcpListener? ListenerData;
         private TcpListener? ListenerScreen;
 
-
+        private X509Certificate2 _serverCertificate = new X509Certificate2(@"C:\certs\server.pfx", "12345678");
 
         public MainWindow()
         {
@@ -57,7 +59,6 @@ namespace WpfTcpServer
             WebRuleTypeComboBox.SelectedIndex = 0;
 
             _ = LoadRulesAsync();
-
 
             StartServer(1337, 1338);
         }
@@ -105,9 +106,22 @@ namespace WpfTcpServer
                 try
                 {
                     TcpClient tcpClientData = await ListenerData.AcceptTcpClientAsync(cancellationToken);
+
+                    SslStream sslDataStream = new SslStream(
+                        tcpClientData.GetStream(),
+                        false
+                    );
+
+                    await sslDataStream.AuthenticateAsServerAsync(
+                        _serverCertificate,
+                        clientCertificateRequired: false,
+                        enabledSslProtocols: System.Security.Authentication.SslProtocols.Tls12,
+                        checkCertificateRevocation: false
+                    );
+
                     TcpClient tcpClientScreen = await ListenerScreen.AcceptTcpClientAsync(cancellationToken);
 
-                    string clientData = await ReadClientDataAsync(tcpClientData);
+                    string clientData = await ReadClientDataAsync(sslDataStream);
 
                     ClientInfo clientInfo = ClientInfo.ParseClientInfo(clientData);
 
@@ -120,11 +134,11 @@ namespace WpfTcpServer
 
                         if (existingClient != null)
                         {
-                            existingClient.Connect(tcpClientData, tcpClientScreen, workstationId, _db);
+                            existingClient.Connect(tcpClientData, sslDataStream, tcpClientScreen, workstationId, _db);
                         }
                         else
                         {
-                            clientInfo.Connect(tcpClientData, tcpClientScreen, workstationId, _db);
+                            clientInfo.Connect(tcpClientData, sslDataStream, tcpClientScreen, workstationId, _db);
                             _clients.Add(clientInfo);
                         }
                     });
@@ -138,10 +152,10 @@ namespace WpfTcpServer
             }
         }
 
-        private static async Task<string> ReadClientDataAsync(TcpClient tcpClient)
+        private static async Task<string> ReadClientDataAsync(SslStream stream)
         {
-            NetworkStream stream = tcpClient.GetStream();
             byte[] buffer = new byte[65536];
+
             int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
 
             return System.Text.Encoding.UTF8.GetString(buffer, 0, bytesRead);

@@ -16,10 +16,21 @@ namespace Client
 
         _sock_data = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         _sock_screen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+        _tlsInitialized = false;
+        ZeroMemory(&_credHandle, sizeof(_credHandle));
+        ZeroMemory(&_contextHandle, sizeof(_contextHandle));
+        ZeroMemory(&_streamSizes, sizeof(_streamSizes));
     }
     
     NetworkManager::~NetworkManager()
     {
+        if (_tlsInitialized)
+        {
+            DeleteSecurityContext(&_contextHandle);
+            FreeCredentialsHandle(&_credHandle);
+        }
+
         if (_sock_data != INVALID_SOCKET)
         {
             closesocket(_sock_data);
@@ -40,12 +51,16 @@ namespace Client
         struct sockaddr_in serverAddr;
 
         serverAddr.sin_family = AF_INET;
-
         serverAddr.sin_port = htons(_port_data);
 
         inet_pton(AF_INET, _ip, &serverAddr.sin_addr);
 
-        return connect(_sock_data, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != SOCKET_ERROR;
+        if (connect(_sock_data, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
+        {
+            return false;
+        }
+
+        return InitializeTlsForDataSocket();
     }
 
     bool  NetworkManager::ConnectScreen() 
@@ -143,6 +158,259 @@ namespace Client
 
     void NetworkManager::SendData(const std::string& data) const
     {
-        send(_sock_data, data.c_str(), static_cast<int>(data.size()), 0);
+        SendTlsData(data);
+    }
+
+    bool NetworkManager::InitializeTlsForDataSocket()
+    {
+        SCHANNEL_CRED schannelCred;
+        ZeroMemory(&schannelCred, sizeof(schannelCred));
+
+        schannelCred.dwVersion = SCHANNEL_CRED_VERSION;
+        schannelCred.grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT;
+        schannelCred.dwFlags =
+            SCH_CRED_NO_DEFAULT_CREDS |
+            SCH_CRED_MANUAL_CRED_VALIDATION;
+
+        TimeStamp expiry;
+
+        SECURITY_STATUS status = AcquireCredentialsHandleA(
+            NULL,
+            const_cast<LPSTR>("Microsoft Unified Security Protocol Provider"),
+            SECPKG_CRED_OUTBOUND,
+            NULL,
+            &schannelCred,
+            NULL,
+            NULL,
+            &_credHandle,
+            &expiry
+        );
+
+        if (status != SEC_E_OK)
+        {
+            std::cerr << "AcquireCredentialsHandle error: " << status << std::endl;
+            return false;
+        }
+
+        DWORD contextFlags =
+            ISC_REQ_SEQUENCE_DETECT |
+            ISC_REQ_REPLAY_DETECT |
+            ISC_REQ_CONFIDENTIALITY |
+            ISC_REQ_ALLOCATE_MEMORY |
+            ISC_REQ_STREAM;
+
+        DWORD contextAttributes = 0;
+
+        SecBuffer outBuffer;
+        SecBufferDesc outBufferDesc;
+
+        outBuffer.BufferType = SECBUFFER_TOKEN;
+        outBuffer.cbBuffer = 0;
+        outBuffer.pvBuffer = NULL;
+
+        outBufferDesc.ulVersion = SECBUFFER_VERSION;
+        outBufferDesc.cBuffers = 1;
+        outBufferDesc.pBuffers = &outBuffer;
+
+        status = InitializeSecurityContext(
+            &_credHandle,
+            NULL,
+            NULL,
+            contextFlags,
+            0,
+            SECURITY_NATIVE_DREP,
+            NULL,
+            0,
+            &_contextHandle,
+            &outBufferDesc,
+            &contextAttributes,
+            &expiry
+        );
+
+        if (status != SEC_I_CONTINUE_NEEDED)
+        {
+            std::cerr << "InitializeSecurityContext first error: " << status << std::endl;
+            return false;
+        }
+
+        if (outBuffer.cbBuffer > 0 && outBuffer.pvBuffer != NULL)
+        {
+            send(
+                _sock_data,
+                static_cast<const char*>(outBuffer.pvBuffer),
+                outBuffer.cbBuffer,
+                0
+            );
+
+            FreeContextBuffer(outBuffer.pvBuffer);
+            outBuffer.pvBuffer = NULL;
+        }
+
+        std::vector<char> inputBuffer(16384);
+
+        while (true)
+        {
+            int received = recv(
+                _sock_data,
+                inputBuffer.data(),
+                static_cast<int>(inputBuffer.size()),
+                0
+            );
+
+            if (received <= 0)
+            {
+                std::cerr << "TLS handshake recv error" << std::endl;
+                return false;
+            }
+
+            SecBuffer inBuffers[2];
+
+            inBuffers[0].BufferType = SECBUFFER_TOKEN;
+            inBuffers[0].pvBuffer = inputBuffer.data();
+            inBuffers[0].cbBuffer = received;
+
+            inBuffers[1].BufferType = SECBUFFER_EMPTY;
+            inBuffers[1].pvBuffer = NULL;
+            inBuffers[1].cbBuffer = 0;
+
+            SecBufferDesc inBufferDesc;
+            inBufferDesc.ulVersion = SECBUFFER_VERSION;
+            inBufferDesc.cBuffers = 2;
+            inBufferDesc.pBuffers = inBuffers;
+
+            outBuffer.BufferType = SECBUFFER_TOKEN;
+            outBuffer.cbBuffer = 0;
+            outBuffer.pvBuffer = NULL;
+
+            outBufferDesc.ulVersion = SECBUFFER_VERSION;
+            outBufferDesc.cBuffers = 1;
+            outBufferDesc.pBuffers = &outBuffer;
+
+            status = InitializeSecurityContext(
+                &_credHandle,
+                &_contextHandle,
+                NULL,
+                contextFlags,
+                0,
+                SECURITY_NATIVE_DREP,
+                &inBufferDesc,
+                0,
+                &_contextHandle,
+                &outBufferDesc,
+                &contextAttributes,
+                &expiry
+            );
+
+            if (outBuffer.cbBuffer > 0 && outBuffer.pvBuffer != NULL)
+            {
+                send(
+                    _sock_data,
+                    static_cast<const char*>(outBuffer.pvBuffer),
+                    outBuffer.cbBuffer,
+                    0
+                );
+
+                FreeContextBuffer(outBuffer.pvBuffer);
+                outBuffer.pvBuffer = NULL;
+            }
+
+            if (status == SEC_E_OK)
+            {
+                break;
+            }
+
+            if (status != SEC_I_CONTINUE_NEEDED)
+            {
+                std::cerr << "TLS handshake error: " << status << std::endl;
+                return false;
+            }
+        }
+
+        status = QueryContextAttributes(
+            &_contextHandle,
+            SECPKG_ATTR_STREAM_SIZES,
+            &_streamSizes
+        );
+
+        if (status != SEC_E_OK)
+        {
+            std::cerr << "QueryContextAttributes error: " << status << std::endl;
+            return false;
+        }
+
+        _tlsInitialized = true;
+        return true;
+    }
+
+    bool NetworkManager::SendTlsData(const std::string& data) const
+    {
+        if (!_tlsInitialized)
+        {
+            std::cerr << "TLS не инициализирован" << std::endl;
+            return false;
+        }
+
+        DWORD totalSize =
+            _streamSizes.cbHeader +
+            static_cast<DWORD>(data.size()) +
+            _streamSizes.cbTrailer;
+
+        std::vector<char> message(totalSize);
+
+        memcpy(
+            message.data() + _streamSizes.cbHeader,
+            data.data(),
+            data.size()
+        );
+
+        SecBuffer buffers[4];
+
+        buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
+        buffers[0].pvBuffer = message.data();
+        buffers[0].cbBuffer = _streamSizes.cbHeader;
+
+        buffers[1].BufferType = SECBUFFER_DATA;
+        buffers[1].pvBuffer = message.data() + _streamSizes.cbHeader;
+        buffers[1].cbBuffer = static_cast<unsigned long>(data.size());
+
+        buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
+        buffers[2].pvBuffer = message.data() + _streamSizes.cbHeader + data.size();
+        buffers[2].cbBuffer = _streamSizes.cbTrailer;
+
+        buffers[3].BufferType = SECBUFFER_EMPTY;
+        buffers[3].pvBuffer = NULL;
+        buffers[3].cbBuffer = 0;
+
+        SecBufferDesc messageDesc;
+        messageDesc.ulVersion = SECBUFFER_VERSION;
+        messageDesc.cBuffers = 4;
+        messageDesc.pBuffers = buffers;
+
+        SECURITY_STATUS status = EncryptMessage(
+            const_cast<CtxtHandle*>(&_contextHandle),
+            0,
+            &messageDesc,
+            0
+        );
+
+        if (status != SEC_E_OK)
+        {
+            std::cerr << "EncryptMessage error: " << status << std::endl;
+            return false;
+        }
+
+        DWORD encryptedSize =
+            buffers[0].cbBuffer +
+            buffers[1].cbBuffer +
+            buffers[2].cbBuffer;
+
+        int sent = send(
+            _sock_data,
+            message.data(),
+            encryptedSize,
+            0
+        );
+
+        return sent != SOCKET_ERROR;
     }
 }
