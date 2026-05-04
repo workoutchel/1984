@@ -46,13 +46,23 @@ namespace Client
 
     private:
 
-        bool InitializeTlsForDataSocket();
+        bool InitializeTlsForSocket(
+            SOCKET socket,
+            CredHandle& credHandle,
+            CtxtHandle& contextHandle,
+            SecPkgContext_StreamSizes& streamSizes,
+            bool& tlsInitialized
+        );
 
         bool SendTlsData(const std::string& data) const;
+        bool SendTlsScreenBytes(const char* data, size_t size) const;
+
+        bool ReceiveTlsScreenData(std::string& result);
 
         const char* _ip;
 
         bool _tlsInitialized = false;
+        bool _screenTlsInitialized = false;
 
         int _port_data;
         int _port_screen;
@@ -60,8 +70,11 @@ namespace Client
         std::atomic<bool> is_connected;
 
         CredHandle _credHandle;
+        CredHandle _screenCredHandle;
         CtxtHandle _contextHandle;
+        CtxtHandle _screenContextHandle;
 
+        SecPkgContext_StreamSizes _screenStreamSizes;
         SecPkgContext_StreamSizes _streamSizes;
 
         SOCKET _sock_data;

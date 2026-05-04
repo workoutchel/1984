@@ -31,7 +31,7 @@ namespace WpfTcpServer
         public Stream? DataStream { get; private set; }
 
         public TcpClient? ScreenClient { get; private set; }
-        public NetworkStream? ScreenStream { get; private set; }
+        public Stream? ScreenStream { get; private set; }
 
         private DatabaseManager? _db;
 
@@ -102,6 +102,7 @@ namespace WpfTcpServer
             TcpClient tcpClientData,
             Stream dataStream,
             TcpClient tcpClientScreen,
+            Stream screenStream,
             int workstationId,
             DatabaseManager db)
         {
@@ -112,7 +113,7 @@ namespace WpfTcpServer
             DataStream = dataStream;
 
             ScreenClient = tcpClientScreen;
-            ScreenStream = tcpClientScreen.GetStream();
+            ScreenStream = screenStream;
 
             IsConnected = true;
 
@@ -153,14 +154,6 @@ namespace WpfTcpServer
                                 }
 
                                 string dnsCacheData = parts.Length > 8 ? parts[8].Trim() : "";
-                                //MessageBox.Show($"parts {parts.Length}");
-
-                                //MessageBox.Show($"DNS data received. {dnsCacheData}");
-
-                                if (!string.IsNullOrWhiteSpace(dnsCacheData))
-                                {
-                                   // MessageBox.Show($"DNS data received. Length = {dnsCacheData.Length}");
-                                }
 
                                 UpdateLastActiveTime(lastActiveTime);
                                 UpdateWindowInfo(windowTitle, processName, processId);
@@ -238,7 +231,13 @@ namespace WpfTcpServer
 
         public async Task WaitScreenshotAsync()
         {
-            NetworkStream stream = ScreenClient.GetStream();
+            Stream stream = ScreenStream;
+
+            if (stream == null)
+            {
+                MessageBox.Show("TLS-поток скриншотов не инициализирован");
+                return;
+            }
 
             byte[] headerBuffer = new byte[sizeof(int) * 4];
             int bytesRead = await stream.ReadAsync(headerBuffer, 0, headerBuffer.Length);

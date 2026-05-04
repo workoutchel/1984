@@ -21,10 +21,21 @@ namespace Client
         ZeroMemory(&_credHandle, sizeof(_credHandle));
         ZeroMemory(&_contextHandle, sizeof(_contextHandle));
         ZeroMemory(&_streamSizes, sizeof(_streamSizes));
+
+        ZeroMemory(&_screenCredHandle, sizeof(_screenCredHandle));
+        ZeroMemory(&_screenContextHandle, sizeof(_screenContextHandle));
+        ZeroMemory(&_screenStreamSizes, sizeof(_screenStreamSizes));
+        _screenTlsInitialized = false;
     }
     
     NetworkManager::~NetworkManager()
     {
+        if (_screenTlsInitialized)
+        {
+            DeleteSecurityContext(&_screenContextHandle);
+            FreeCredentialsHandle(&_screenCredHandle);
+        }
+
         if (_tlsInitialized)
         {
             DeleteSecurityContext(&_contextHandle);
@@ -60,54 +71,64 @@ namespace Client
             return false;
         }
 
-        return InitializeTlsForDataSocket();
+        return InitializeTlsForSocket(
+            _sock_data,
+            _credHandle,
+            _contextHandle,
+            _streamSizes,
+            _tlsInitialized
+        );
     }
 
-    bool  NetworkManager::ConnectScreen() 
+    bool NetworkManager::ConnectScreen()
     {
         struct sockaddr_in serverAddr;
 
         serverAddr.sin_family = AF_INET;
-
         serverAddr.sin_port = htons(_port_screen);
 
         inet_pton(AF_INET, _ip, &serverAddr.sin_addr);
 
-        if(connect(_sock_screen, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) != SOCKET_ERROR)
+        if (connect(_sock_screen, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
         {
-            is_connected = true;
-            return true;
+            return false;
         }
 
-        return false;
+        if (!InitializeTlsForSocket(
+            _sock_screen,
+            _screenCredHandle,
+            _screenContextHandle,
+            _screenStreamSizes,
+            _screenTlsInitialized
+        ))
+        {
+            return false;
+        }
+
+        is_connected = true;
+        return true;
     }
 
 
 
     void NetworkManager::WaitForScreenshotRequest()
     {
-        char buffer[1024];
-
         while (true)
         {
-            memset(buffer, 0, sizeof(buffer));
+            std::string message;
 
-            int bytesRead = recv(_sock_screen, buffer, sizeof(buffer) - 1, 0);
-
-            if (bytesRead > 0) 
+            if (!ReceiveTlsScreenData(message))
             {
-                std::string message(buffer, bytesRead);
-
-                if (message == "SCREENSHOT_PLEASE") 
-                {
-                    SendScreenshot(_ScreenshotManagerPtr->CaptureScreenshot());
-                }
-            }
-            else
-            {
-                std::cerr << "Ошибка получения данных по порту: " << _port_screen << std::endl;
+                std::cerr << "Ошибка получения TLS-запроса скриншота по порту: " << _port_screen << std::endl;
                 is_connected = false;
                 break;
+            }
+
+            std::cout << "Получено TLS-сообщение: " << message << std::endl;
+
+            if (message == "SCREENSHOT_PLEASE")
+            {
+                SendScreenshot(_ScreenshotManagerPtr->CaptureScreenshot());
             }
         }
     }
@@ -136,17 +157,10 @@ namespace Client
             std::memcpy(buffer.data() + sizeof(width) + sizeof(height), &imageSize, sizeof(imageSize));
             std::memcpy(buffer.data() + sizeof(width) + sizeof(height) + sizeof(imageSize), vector.data(), imageSize);
 
-            size_t totalBytesSent = 0;
-
-            while (totalBytesSent < totalDataSize)
+            if (!SendTlsScreenBytes(buffer.data(), buffer.size()))
             {
-                int bytesSent = send(_sock_screen, buffer.data() + totalBytesSent, static_cast<int>(totalDataSize - totalBytesSent), 0);
-                if (bytesSent == SOCKET_ERROR)
-                {
-                    std::cerr << "Ошибка при отправке изображения" << std::endl;
-                    return;
-                }
-                totalBytesSent += bytesSent;
+                std::cerr << "Ошибка при TLS-отправке изображения" << std::endl;
+                return;
             }
         }
         catch (const std::exception& ex)
@@ -161,7 +175,13 @@ namespace Client
         SendTlsData(data);
     }
 
-    bool NetworkManager::InitializeTlsForDataSocket()
+    bool NetworkManager::InitializeTlsForSocket(
+        SOCKET socket,
+        CredHandle& credHandle,
+        CtxtHandle& contextHandle,
+        SecPkgContext_StreamSizes& streamSizes,
+        bool& tlsInitialized
+    )
     {
         SCHANNEL_CRED schannelCred;
         ZeroMemory(&schannelCred, sizeof(schannelCred));
@@ -182,7 +202,7 @@ namespace Client
             &schannelCred,
             NULL,
             NULL,
-            &_credHandle,
+            &credHandle,
             &expiry
         );
 
@@ -212,8 +232,8 @@ namespace Client
         outBufferDesc.cBuffers = 1;
         outBufferDesc.pBuffers = &outBuffer;
 
-        status = InitializeSecurityContext(
-            &_credHandle,
+        status = InitializeSecurityContextA(
+            &credHandle,
             NULL,
             NULL,
             contextFlags,
@@ -221,7 +241,7 @@ namespace Client
             SECURITY_NATIVE_DREP,
             NULL,
             0,
-            &_contextHandle,
+            &contextHandle,
             &outBufferDesc,
             &contextAttributes,
             &expiry
@@ -230,13 +250,14 @@ namespace Client
         if (status != SEC_I_CONTINUE_NEEDED)
         {
             std::cerr << "InitializeSecurityContext first error: " << status << std::endl;
+            FreeCredentialsHandle(&credHandle);
             return false;
         }
 
         if (outBuffer.cbBuffer > 0 && outBuffer.pvBuffer != NULL)
         {
-            send(
-                _sock_data,
+            int sent = send(
+                socket,
                 static_cast<const char*>(outBuffer.pvBuffer),
                 outBuffer.cbBuffer,
                 0
@@ -244,6 +265,13 @@ namespace Client
 
             FreeContextBuffer(outBuffer.pvBuffer);
             outBuffer.pvBuffer = NULL;
+
+            if (sent == SOCKET_ERROR)
+            {
+                std::cerr << "TLS first token send error" << std::endl;
+                FreeCredentialsHandle(&credHandle);
+                return false;
+            }
         }
 
         std::vector<char> inputBuffer(16384);
@@ -251,7 +279,7 @@ namespace Client
         while (true)
         {
             int received = recv(
-                _sock_data,
+                socket,
                 inputBuffer.data(),
                 static_cast<int>(inputBuffer.size()),
                 0
@@ -260,6 +288,8 @@ namespace Client
             if (received <= 0)
             {
                 std::cerr << "TLS handshake recv error" << std::endl;
+                DeleteSecurityContext(&contextHandle);
+                FreeCredentialsHandle(&credHandle);
                 return false;
             }
 
@@ -286,16 +316,16 @@ namespace Client
             outBufferDesc.cBuffers = 1;
             outBufferDesc.pBuffers = &outBuffer;
 
-            status = InitializeSecurityContext(
-                &_credHandle,
-                &_contextHandle,
+            status = InitializeSecurityContextA(
+                &credHandle,
+                &contextHandle,
                 NULL,
                 contextFlags,
                 0,
                 SECURITY_NATIVE_DREP,
                 &inBufferDesc,
                 0,
-                &_contextHandle,
+                &contextHandle,
                 &outBufferDesc,
                 &contextAttributes,
                 &expiry
@@ -303,8 +333,8 @@ namespace Client
 
             if (outBuffer.cbBuffer > 0 && outBuffer.pvBuffer != NULL)
             {
-                send(
-                    _sock_data,
+                int sent = send(
+                    socket,
                     static_cast<const char*>(outBuffer.pvBuffer),
                     outBuffer.cbBuffer,
                     0
@@ -312,6 +342,14 @@ namespace Client
 
                 FreeContextBuffer(outBuffer.pvBuffer);
                 outBuffer.pvBuffer = NULL;
+
+                if (sent == SOCKET_ERROR)
+                {
+                    std::cerr << "TLS handshake token send error" << std::endl;
+                    DeleteSecurityContext(&contextHandle);
+                    FreeCredentialsHandle(&credHandle);
+                    return false;
+                }
             }
 
             if (status == SEC_E_OK)
@@ -322,23 +360,27 @@ namespace Client
             if (status != SEC_I_CONTINUE_NEEDED)
             {
                 std::cerr << "TLS handshake error: " << status << std::endl;
+                DeleteSecurityContext(&contextHandle);
+                FreeCredentialsHandle(&credHandle);
                 return false;
             }
         }
 
         status = QueryContextAttributes(
-            &_contextHandle,
+            &contextHandle,
             SECPKG_ATTR_STREAM_SIZES,
-            &_streamSizes
+            &streamSizes
         );
 
         if (status != SEC_E_OK)
         {
             std::cerr << "QueryContextAttributes error: " << status << std::endl;
+            DeleteSecurityContext(&contextHandle);
+            FreeCredentialsHandle(&credHandle);
             return false;
         }
 
-        _tlsInitialized = true;
+        tlsInitialized = true;
         return true;
     }
 
@@ -412,5 +454,174 @@ namespace Client
         );
 
         return sent != SOCKET_ERROR;
+    }
+
+
+    bool NetworkManager::ReceiveTlsScreenData(std::string& result)
+    {
+        result.clear();
+
+        if (!_screenTlsInitialized)
+        {
+            std::cerr << "TLS screen не инициализирован" << std::endl;
+            return false;
+        }
+
+        std::vector<char> encryptedBuffer(65536);
+
+        int received = recv(
+            _sock_screen,
+            encryptedBuffer.data(),
+            static_cast<int>(encryptedBuffer.size()),
+            0
+        );
+
+        if (received <= 0)
+            return false;
+
+        SecBuffer buffers[4];
+
+        buffers[0].BufferType = SECBUFFER_DATA;
+        buffers[0].pvBuffer = encryptedBuffer.data();
+        buffers[0].cbBuffer = received;
+
+        buffers[1].BufferType = SECBUFFER_EMPTY;
+        buffers[1].pvBuffer = NULL;
+        buffers[1].cbBuffer = 0;
+
+        buffers[2].BufferType = SECBUFFER_EMPTY;
+        buffers[2].pvBuffer = NULL;
+        buffers[2].cbBuffer = 0;
+
+        buffers[3].BufferType = SECBUFFER_EMPTY;
+        buffers[3].pvBuffer = NULL;
+        buffers[3].cbBuffer = 0;
+
+        SecBufferDesc messageDesc;
+        messageDesc.ulVersion = SECBUFFER_VERSION;
+        messageDesc.cBuffers = 4;
+        messageDesc.pBuffers = buffers;
+
+        SECURITY_STATUS status = DecryptMessage(
+            &_screenContextHandle,
+            &messageDesc,
+            0,
+            NULL
+        );
+
+        if (status != SEC_E_OK)
+        {
+            std::cerr << "DecryptMessage screen error: " << status << std::endl;
+            return false;
+        }
+
+        for (int i = 0; i < 4; i++)
+        {
+            if (buffers[i].BufferType == SECBUFFER_DATA && buffers[i].cbBuffer > 0)
+            {
+                result.assign(
+                    static_cast<char*>(buffers[i].pvBuffer),
+                    buffers[i].cbBuffer
+                );
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool NetworkManager::SendTlsScreenBytes(const char* data, size_t size) const
+    {
+        if (!_screenTlsInitialized)
+        {
+            std::cerr << "TLS screen не инициализирован" << std::endl;
+            return false;
+        }
+
+        size_t offset = 0;
+
+        while (offset < size)
+        {
+            size_t chunkSize = min(
+                static_cast<size_t>(_screenStreamSizes.cbMaximumMessage),
+                size - offset
+            );
+
+            DWORD totalSize =
+                _screenStreamSizes.cbHeader +
+                static_cast<DWORD>(chunkSize) +
+                _screenStreamSizes.cbTrailer;
+
+            std::vector<char> message(totalSize);
+
+            memcpy(
+                message.data() + _screenStreamSizes.cbHeader,
+                data + offset,
+                chunkSize
+            );
+
+            SecBuffer buffers[4];
+
+            buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
+            buffers[0].pvBuffer = message.data();
+            buffers[0].cbBuffer = _screenStreamSizes.cbHeader;
+
+            buffers[1].BufferType = SECBUFFER_DATA;
+            buffers[1].pvBuffer = message.data() + _screenStreamSizes.cbHeader;
+            buffers[1].cbBuffer = static_cast<unsigned long>(chunkSize);
+
+            buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
+            buffers[2].pvBuffer = message.data() + _screenStreamSizes.cbHeader + chunkSize;
+            buffers[2].cbBuffer = _screenStreamSizes.cbTrailer;
+
+            buffers[3].BufferType = SECBUFFER_EMPTY;
+            buffers[3].pvBuffer = NULL;
+            buffers[3].cbBuffer = 0;
+
+            SecBufferDesc messageDesc;
+            messageDesc.ulVersion = SECBUFFER_VERSION;
+            messageDesc.cBuffers = 4;
+            messageDesc.pBuffers = buffers;
+
+            SECURITY_STATUS status = EncryptMessage(
+                const_cast<CtxtHandle*>(&_screenContextHandle),
+                0,
+                &messageDesc,
+                0
+            );
+
+            if (status != SEC_E_OK)
+            {
+                std::cerr << "EncryptMessage screen error: " << status << std::endl;
+                return false;
+            }
+
+            DWORD encryptedSize =
+                buffers[0].cbBuffer +
+                buffers[1].cbBuffer +
+                buffers[2].cbBuffer;
+
+            DWORD totalSent = 0;
+
+            while (totalSent < encryptedSize)
+            {
+                int sent = send(
+                    _sock_screen,
+                    message.data() + totalSent,
+                    encryptedSize - totalSent,
+                    0
+                );
+
+                if (sent == SOCKET_ERROR || sent == 0)
+                    return false;
+
+                totalSent += sent;
+            }
+
+            offset += chunkSize;
+        }
+
+        return true;
     }
 }
