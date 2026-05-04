@@ -9,7 +9,7 @@ using System.Windows.Media.Imaging;
 
 
 
-namespace Server
+namespace WpfTcpServer
 {
     public class ClientInfo : INotifyPropertyChanged
     {
@@ -177,8 +177,6 @@ namespace Server
                                         parsedTime
                                     );
 
-                                    await CheckApplicationRuleAsync(processName);
-
                                     await HandleWebActivityEventAsync(
                                         windowTitle,
                                         processName,
@@ -186,11 +184,6 @@ namespace Server
                                     );
 
                                     string webDomain = ExtractDomainFromWindowTitle(windowTitle);
-
-                                    if (!string.IsNullOrWhiteSpace(webDomain))
-                                    {
-                                        await CheckWebResourceRuleAsync(webDomain);
-                                    }
 
                                     await HandleDnsCacheRecordsAsync(
                                         dnsCacheData,
@@ -463,7 +456,6 @@ namespace Server
             );
 
             string webRule = await _db.CheckWebResourceRuleAsync(domain);
-            MessageBox.Show($"domain={domain}, webRule={webRule}");
             if (webRule == "blacklist")
             {
                 await _db.AddViolationAsync(

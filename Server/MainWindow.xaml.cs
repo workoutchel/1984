@@ -1,4 +1,4 @@
-﻿using Server;
+﻿using WpfTcpServer;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Net;

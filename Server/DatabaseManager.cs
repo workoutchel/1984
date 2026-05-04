@@ -4,7 +4,7 @@ using System.Globalization;
 using System.IO;
 using WpfTcpServer;
 
-namespace Server
+namespace WpfTcpServer
 {
     public class DatabaseManager
     {

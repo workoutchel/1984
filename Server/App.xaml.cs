@@ -1,6 +1,6 @@
 ﻿using System.Windows;
 
-namespace Server
+namespace WpfTcpServer
 {
     /// <summary>
     /// Interaction logic for App.xaml
