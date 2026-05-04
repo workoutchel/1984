@@ -9,10 +9,17 @@ namespace WpfTcpServer
         private readonly ClientInfo _client;
         private readonly WorkstationAnalyticsViewModel _analytics;
 
-        public AnalyticsWindow(ClientInfo client, WorkstationAnalyticsViewModel analytics)
+
+        private DatePicker _startDatePicker;
+        private DatePicker _endDatePicker;
+
+        private readonly DatabaseManager _db;
+
+        public AnalyticsWindow(ClientInfo client, WorkstationAnalyticsViewModel analytics, DatabaseManager db)
         {
             _client = client;
             _analytics = analytics;
+            _db = db;
 
             Title = $"Аналитика: {client.HostName} / {client.UserName}";
             Width = 760;
@@ -43,6 +50,8 @@ namespace WpfTcpServer
                 FontSize = 14,
                 Margin = new Thickness(0, 0, 0, 16)
             });
+
+            root.Children.Add(CreateReportPanel());
 
             root.Children.Add(CreateSummaryGrid());
 
@@ -215,6 +224,76 @@ namespace WpfTcpServer
             grid.Children.Add(valueBlock);
 
             return grid;
+        }
+
+        private StackPanel CreateReportPanel()
+        {
+            var panel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 0, 0, 16)
+            };
+
+            _startDatePicker = new DatePicker
+            {
+                SelectedDate = DateTime.Today,
+                Width = 140,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+
+            _endDatePicker = new DatePicker
+            {
+                SelectedDate = DateTime.Today,
+                Width = 140,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+
+            var button = new Button
+            {
+                Content = "Сформировать отчёт",
+                Padding = new Thickness(12, 4, 12, 4)
+            };
+
+            button.Click += GenerateReportButton_Click;
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Период:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            });
+
+            panel.Children.Add(_startDatePicker);
+            panel.Children.Add(_endDatePicker);
+            panel.Children.Add(button);
+
+            return panel;
+        }
+
+        private async void GenerateReportButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_startDatePicker.SelectedDate == null || _endDatePicker.SelectedDate == null)
+            {
+                MessageBox.Show("Выберите дату начала и дату окончания.");
+                return;
+            }
+
+            DateTime start = _startDatePicker.SelectedDate.Value.Date;
+            DateTime end = _endDatePicker.SelectedDate.Value.Date;
+
+            if (end < start)
+            {
+                MessageBox.Show("Дата окончания не может быть раньше даты начала.");
+                return;
+            }
+
+            int reportId = await _db.GenerateAndSaveDailyReportAsync(
+                _client.WorkstationId,
+                start,
+                end
+            );
+
+            MessageBox.Show($"Отчёт сформирован и сохранён. ID отчёта: {reportId}");
         }
     }
 }

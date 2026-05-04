@@ -318,7 +318,7 @@ namespace WpfTcpServer
             {
                 var analytics = await _db.GetWorkstationAnalyticsAsync(client.WorkstationId);
 
-                var window = new AnalyticsWindow(client, analytics);
+                var window = new AnalyticsWindow(client, analytics, _db);
                 window.Owner = this;
                 window.ShowDialog();
             }

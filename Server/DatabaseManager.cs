@@ -2,7 +2,7 @@
 using Npgsql;
 using System.Globalization;
 using System.IO;
-using WpfTcpServer;
+using System.Text.Json;
 
 namespace WpfTcpServer
 {
@@ -900,6 +900,141 @@ namespace WpfTcpServer
                 HourlyActivity = hourly
             };
         }
+
+        public async Task<int> GenerateAndSaveDailyReportAsync(
+            int workstationId,
+            DateTime periodStart,
+            DateTime periodEnd)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            DateTime start = periodStart.Date;
+            DateTime endExclusive = periodEnd.Date.AddDays(1);
+
+            string activitySql = @"
+                SELECT
+                    (ap.start_time::date)::timestamp AS Date,
+                    COALESCE(SUM(CASE WHEN apt.name = 'active' THEN ap.duration_seconds ELSE 0 END), 0) AS ActiveSeconds,
+                    COALESCE(SUM(CASE WHEN apt.name = 'idle' THEN ap.duration_seconds ELSE 0 END), 0) AS IdleSeconds
+                FROM activity_periods ap
+                JOIN activity_period_types apt ON ap.period_type_id = apt.id
+                WHERE ap.workstation_id = @WorkstationId
+                  AND ap.start_time >= @Start
+                  AND ap.start_time < @End
+                GROUP BY ap.start_time::date
+                ORDER BY ap.start_time::date;
+                ";
+
+            var activityRows = (await connection.QueryAsync<DailyReportViewModel>(
+                activitySql,
+                new
+                {
+                    WorkstationId = workstationId,
+                    Start = start,
+                    End = endExclusive
+                }
+            )).ToList();
+
+            var report = new ActivityReportViewModel
+            {
+                WorkstationId = workstationId,
+                PeriodStart = start,
+                PeriodEnd = periodEnd.Date
+            };
+
+            for (DateTime day = start; day < endExclusive; day = day.AddDays(1))
+            {
+                var existing = activityRows.FirstOrDefault(x => x.Date.Date == day.Date);
+
+                var daily = existing ?? new DailyReportViewModel
+                {
+                    Date = day
+                };
+
+                daily.TotalSeconds = daily.ActiveSeconds + daily.IdleSeconds;
+                daily.IdlePercent = daily.TotalSeconds == 0
+                    ? 0
+                    : Math.Round((double)daily.IdleSeconds / daily.TotalSeconds * 100, 2);
+
+                daily.WebEvents = await connection.ExecuteScalarAsync<int>(
+                            @"
+                    SELECT COUNT(*)
+                    FROM web_activity
+                    WHERE workstation_id = @WorkstationId
+                      AND access_time >= @DayStart
+                      AND access_time < @DayEnd;
+                    ",
+                    new
+                    {
+                        WorkstationId = workstationId,
+                        DayStart = day,
+                        DayEnd = day.AddDays(1)
+                    }
+                );
+
+                daily.Violations = await connection.ExecuteScalarAsync<int>(
+                            @"
+                    SELECT COUNT(*)
+                    FROM violations
+                    WHERE workstation_id = @WorkstationId
+                      AND detected_at >= @DayStart
+                      AND detected_at < @DayEnd;
+                    ",
+                    new
+                    {
+                        WorkstationId = workstationId,
+                        DayStart = day,
+                        DayEnd = day.AddDays(1)
+                    }
+                );
+
+                daily.TopApplications = (await connection.QueryAsync<ApplicationUsageViewModel>(
+                            @"
+                    SELECT
+                        process_name AS ProcessName,
+                        COALESCE(SUM(duration_seconds), 0) AS DurationSeconds
+                    FROM window_activity
+                    WHERE workstation_id = @WorkstationId
+                      AND start_time >= @DayStart
+                      AND start_time < @DayEnd
+                    GROUP BY process_name
+                    ORDER BY DurationSeconds DESC
+                    LIMIT 5;
+                    ",
+                    new
+                    {
+                        WorkstationId = workstationId,
+                        DayStart = day,
+                        DayEnd = day.AddDays(1)
+                    }
+                )).ToList();
+
+                report.Days.Add(daily);
+            }
+
+            string json = JsonSerializer.Serialize(report);
+
+            string insertSql = @"
+                INSERT INTO reports
+                    (workstation_id, period_start, period_end, report_type, report_data)
+                VALUES
+                    (@WorkstationId, @PeriodStart, @PeriodEnd, @ReportType, CAST(@ReportData AS jsonb))
+                RETURNING id;
+            ";
+
+            return await connection.ExecuteScalarAsync<int>(
+                insertSql,
+                new
+                {
+                    WorkstationId = workstationId,
+                    PeriodStart = start,
+                    PeriodEnd = periodEnd.Date,
+                    ReportType = "daily_activity_report",
+                    ReportData = json
+                }
+            );
+        }
     }
 
     public class AnalyticsTotalsRow
@@ -950,5 +1085,29 @@ namespace WpfTcpServer
 
         public string HourText => $"{Hour:00}:00";
         public string DurationText => ApplicationUsageViewModel.FormatDuration(ActiveSeconds);
+    }
+
+    public class DailyReportViewModel
+    {
+        public DateTime Date { get; set; }
+        public int ActiveSeconds { get; set; }
+        public int IdleSeconds { get; set; }
+        public int TotalSeconds { get; set; }
+        public double IdlePercent { get; set; }
+        public int WebEvents { get; set; }
+        public int Violations { get; set; }
+        public List<ApplicationUsageViewModel> TopApplications { get; set; } = new();
+
+        public string DateText => Date.ToString("yyyy-MM-dd");
+        public string ActiveText => ApplicationUsageViewModel.FormatDuration(ActiveSeconds);
+        public string IdleText => ApplicationUsageViewModel.FormatDuration(IdleSeconds);
+    }
+
+    public class ActivityReportViewModel
+    {
+        public int WorkstationId { get; set; }
+        public DateTime PeriodStart { get; set; }
+        public DateTime PeriodEnd { get; set; }
+        public List<DailyReportViewModel> Days { get; set; } = new();
     }
 }
