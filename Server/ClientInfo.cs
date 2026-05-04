@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 
 
 
+
 namespace Server
 {
     public class ClientInfo : INotifyPropertyChanged
@@ -176,11 +177,20 @@ namespace Server
                                         parsedTime
                                     );
 
+                                    await CheckApplicationRuleAsync(processName);
+
                                     await HandleWebActivityEventAsync(
                                         windowTitle,
                                         processName,
                                         parsedTime
                                     );
+
+                                    string webDomain = ExtractDomainFromWindowTitle(windowTitle);
+
+                                    if (!string.IsNullOrWhiteSpace(webDomain))
+                                    {
+                                        await CheckWebResourceRuleAsync(webDomain);
+                                    }
 
                                     await HandleDnsCacheRecordsAsync(
                                         dnsCacheData,
@@ -398,6 +408,30 @@ namespace Server
                     eventTime
                 );
             }
+
+            string applicationRule = await _db.CheckApplicationRuleAsync(processName);
+
+            if (applicationRule == "blacklist")
+            {
+                try
+                {
+                    await _db.AddViolationAsync(
+                        WorkstationId,
+                        "window_activity",
+                        _currentWindowActivityId,
+                        "blacklist_application",
+                        "medium",
+                        $"Запущено запрещённое приложение: {processName}",
+                        processName,
+                        "application_rules",
+                        eventTime
+                    );
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Ошибка записи нарушения:\n" + ex);
+                }
+            }
         }
         private async Task HandleWebActivityEventAsync(
             string windowTitle,
@@ -419,7 +453,7 @@ namespace Server
                 detectionMethod = "window_title";
             }
 
-            await _db.AddWebActivityAsync(
+            int webActivityId = await _db.AddWebActivityAsync(
                 WorkstationId,
                 processName,
                 windowTitle,
@@ -427,6 +461,23 @@ namespace Server
                 detectionMethod,
                 eventTime
             );
+
+            string webRule = await _db.CheckWebResourceRuleAsync(domain);
+            MessageBox.Show($"domain={domain}, webRule={webRule}");
+            if (webRule == "blacklist")
+            {
+                await _db.AddViolationAsync(
+                    WorkstationId,
+                    "web_activity",
+                    webActivityId,
+                    "blacklist_web_resource",
+                    "medium",
+                    $"Посещение запрещённого веб-ресурса: {domain}",
+                    domain,
+                    "web_resource_rules",
+                    eventTime
+                );
+            }
         }
 
         private static bool IsBrowserProcess(string processName)

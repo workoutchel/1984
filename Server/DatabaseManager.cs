@@ -1,6 +1,8 @@
 ﻿using Dapper;
 using Npgsql;
 using System.Globalization;
+using System.IO;
+using WpfTcpServer;
 
 namespace Server
 {
@@ -9,6 +11,21 @@ namespace Server
         private readonly string _connectionString;
 
         private const int IdleThresholdSeconds = 60;
+
+        private const int RulesCacheSeconds = 30;
+
+        private const int LongIdleViolationSeconds = 300;
+
+        private DateTime _rulesLoadedAt = DateTime.MinValue;
+
+        private List<ControlRule> _applicationRules = new();
+        private List<ControlRule> _webResourceRules = new();
+
+        private class ControlRule
+        {
+            public string Value { get; set; } = "";
+            public string RuleType { get; set; } = "";
+        }
 
         private class ActivityPeriodRow
         {
@@ -132,7 +149,28 @@ namespace Server
                 }
                 else
                 {
-                    await CreatePeriodAsync(connection, transaction, workstationId, "idle", previousEndTime, eventTime);
+                    int idlePeriodId = await CreatePeriodAsync(
+                        connection,
+                        transaction,
+                        workstationId,
+                        "idle",
+                        previousEndTime,
+                        eventTime
+                    );
+
+                    if (gapSeconds >= LongIdleViolationSeconds)
+                    {
+                        await AddIdleViolationAsync(
+                            connection,
+                            transaction,
+                            workstationId,
+                            idlePeriodId,
+                            gapSeconds,
+                            previousEndTime,
+                            eventTime
+                        );
+                    }
+
                     await CreatePeriodAsync(connection, transaction, workstationId, "active", eventTime, eventTime);
                 }
             }
@@ -143,7 +181,7 @@ namespace Server
             }
         }
 
-        private async Task CreatePeriodAsync(
+        private async Task<int> CreatePeriodAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             int workstationId,
@@ -163,10 +201,11 @@ namespace Server
                         @StartTime,
                         @EndTime,
                         @DurationSeconds
-                    );
+                    )
+                RETURNING id;
             ";
 
-            await connection.ExecuteAsync(sql, new
+            return await connection.ExecuteScalarAsync<int>(sql, new
             {
                 WorkstationId = workstationId,
                 PeriodType = periodType,
@@ -279,7 +318,7 @@ namespace Server
             });
         }
 
-        public async Task AddWebActivityAsync(
+        public async Task<int> AddWebActivityAsync(
             int workstationId,
             string processName,
             string windowTitle,
@@ -296,10 +335,11 @@ namespace Server
                 INSERT INTO web_activity
                     (workstation_id, process_name, window_title, domain_name, detection_method, access_time)
                 VALUES
-                    (@WorkstationId, @ProcessName, @WindowTitle, @DomainName, @DetectionMethod, @AccessTime);
+                    (@WorkstationId, @ProcessName, @WindowTitle, @DomainName, @DetectionMethod, @AccessTime)
+                RETURNING id;
             ";
 
-            await connection.ExecuteAsync(sql, new
+            return await connection.ExecuteScalarAsync<int>(sql, new
             {
                 WorkstationId = workstationId,
                 ProcessName = processName,
@@ -386,6 +426,381 @@ namespace Server
                 WorkstationId = workstationId,
                 EventTime = eventTime
             });
+        }
+
+        private async Task EnsureRulesLoadedAsync()
+        {
+            if ((DateTime.Now - _rulesLoadedAt).TotalSeconds < RulesCacheSeconds)
+                return;
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string appSql = @"
+        SELECT 
+            LOWER(application_name) AS Value,
+            LOWER(rt.name) AS RuleType
+        FROM application_rules ar
+        JOIN rule_types rt ON ar.rule_type_id = rt.id
+        WHERE ar.is_active = true;
+    ";
+
+            string webSql = @"
+        SELECT 
+            LOWER(domain_name) AS Value,
+            LOWER(rt.name) AS RuleType
+        FROM web_resource_rules wr
+        JOIN rule_types rt ON wr.rule_type_id = rt.id
+        WHERE wr.is_active = true;
+    ";
+
+            _applicationRules = (await connection.QueryAsync<ControlRule>(appSql)).ToList();
+            _webResourceRules = (await connection.QueryAsync<ControlRule>(webSql)).ToList();
+
+            _rulesLoadedAt = DateTime.Now;
+        }
+
+        public async Task<string> CheckApplicationRuleAsync(string processName)
+        {
+            await EnsureRulesLoadedAsync();
+
+            if (string.IsNullOrWhiteSpace(processName))
+                return "none";
+
+            string normalizedProcessName = Path.GetFileName(processName)
+                .Trim()
+                .ToLowerInvariant();
+
+            ControlRule? blacklistRule = _applicationRules.FirstOrDefault(rule =>
+                rule.RuleType == "blacklist" &&
+                normalizedProcessName == rule.Value
+            );
+
+            if (blacklistRule != null)
+                return "blacklist";
+
+            ControlRule? whitelistRule = _applicationRules.FirstOrDefault(rule =>
+                rule.RuleType == "whitelist" &&
+                normalizedProcessName == rule.Value
+            );
+
+            if (whitelistRule != null)
+                return "whitelist";
+
+            return "none";
+        }
+
+        public async Task<string> CheckWebResourceRuleAsync(string domainName)
+        {
+            await EnsureRulesLoadedAsync();
+
+            if (string.IsNullOrWhiteSpace(domainName))
+                return "none";
+
+            if (domainName == "unknown")
+                return "none";
+
+            string normalizedDomain = domainName
+                .Trim()
+                .Trim('.')
+                .ToLowerInvariant();
+
+            ControlRule? blacklistRule = _webResourceRules.FirstOrDefault(rule =>
+                rule.RuleType == "blacklist" &&
+                IsDomainMatch(normalizedDomain, rule.Value)
+            );
+
+            if (blacklistRule != null)
+                return "blacklist";
+
+            ControlRule? whitelistRule = _webResourceRules.FirstOrDefault(rule =>
+                rule.RuleType == "whitelist" &&
+                IsDomainMatch(normalizedDomain, rule.Value)
+            );
+
+            if (whitelistRule != null)
+                return "whitelist";
+
+            return "none";
+        }
+
+        private static bool IsDomainMatch(string domain, string ruleDomain)
+        {
+            if (string.IsNullOrWhiteSpace(domain) || string.IsNullOrWhiteSpace(ruleDomain))
+                return false;
+
+            ruleDomain = ruleDomain.Trim().Trim('.').ToLowerInvariant();
+
+            return domain == ruleDomain || domain.EndsWith("." + ruleDomain);
+        }
+
+        public async Task<List<RuleViewModel>> LoadApplicationRulesAsync()
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                SELECT
+                    ar.id AS Id,
+                    ar.application_name AS Value,
+                    rt.name AS RuleType,
+                    ar.is_active AS IsActive,
+                    ar.created_at AS CreatedAt
+                FROM application_rules ar
+                JOIN rule_types rt ON ar.rule_type_id = rt.id
+                ORDER BY ar.id;
+            ";
+
+            return (await connection.QueryAsync<RuleViewModel>(sql)).ToList();
+        }
+
+        public async Task<List<RuleViewModel>> LoadWebResourceRulesAsync()
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                SELECT
+                    wr.id AS Id,
+                    wr.domain_name AS Value,
+                    rt.name AS RuleType,
+                    wr.is_active AS IsActive,
+                    wr.created_at AS CreatedAt
+                FROM web_resource_rules wr
+                JOIN rule_types rt ON wr.rule_type_id = rt.id
+                ORDER BY wr.id;
+            ";
+
+            return (await connection.QueryAsync<RuleViewModel>(sql)).ToList();
+        }
+
+        public async Task AddApplicationRuleAsync(string applicationName, string ruleType)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                INSERT INTO application_rules
+                    (application_name, rule_type_id, is_active, created_at)
+                VALUES
+                    (
+                        @ApplicationName,
+                        (SELECT id FROM rule_types WHERE name = @RuleType),
+                        true,
+                        CURRENT_TIMESTAMP
+                    );
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                ApplicationName = applicationName,
+                RuleType = ruleType
+            });
+        }
+
+        public async Task AddWebResourceRuleAsync(string domainName, string ruleType)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                INSERT INTO web_resource_rules
+                    (domain_name, rule_type_id, is_active, created_at)
+                VALUES
+                    (
+                        @DomainName,
+                        (SELECT id FROM rule_types WHERE name = @RuleType),
+                        true,
+                        CURRENT_TIMESTAMP
+                    );
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                DomainName = domainName,
+                RuleType = ruleType
+            });
+        }
+
+        public async Task DeleteApplicationRuleAsync(int ruleId)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                DELETE FROM application_rules
+                WHERE id = @RuleId;
+            ";
+
+            await connection.ExecuteAsync(sql, new { RuleId = ruleId });
+        }
+
+        public async Task DeleteWebResourceRuleAsync(int ruleId)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                DELETE FROM web_resource_rules
+                WHERE id = @RuleId;
+            ";
+
+            await connection.ExecuteAsync(sql, new { RuleId = ruleId });
+        }
+
+        public async Task UpdateApplicationRuleActiveAsync(int ruleId, bool isActive)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                UPDATE application_rules
+                SET is_active = @IsActive
+                WHERE id = @RuleId;
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                RuleId = ruleId,
+                IsActive = isActive
+            });
+        }
+
+        public async Task UpdateWebResourceRuleActiveAsync(int ruleId, bool isActive)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                UPDATE web_resource_rules
+                SET is_active = @IsActive
+                WHERE id = @RuleId;
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                RuleId = ruleId,
+                IsActive = isActive
+            });
+        }
+
+        public async Task AddViolationAsync(
+            int workstationId,
+            string sourceTable,
+            int? sourceEventId,
+            string violationType,
+            string severity,
+            string description,
+            string relatedEntity,
+            string ruleSource,
+            DateTime detectedAt)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                INSERT INTO violations
+                    (
+                        workstation_id,
+                        source_table,
+                        source_event_id,
+                        violation_type,
+                        severity,
+                        description,
+                        related_entity,
+                        rule_source,
+                        detected_at,
+                        is_resolved
+                    )
+                SELECT
+                    @WorkstationId,
+                    @SourceTable,
+                    @SourceEventId,
+                    @ViolationType,
+                    @Severity,
+                    @Description,
+                    @RelatedEntity,
+                    @RuleSource,
+                    @DetectedAt,
+                    false
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM violations
+                    WHERE workstation_id = @WorkstationId
+                      AND source_table = @SourceTable
+                      AND COALESCE(source_event_id, 0) = COALESCE(@SourceEventId, 0)
+                      AND violation_type = @ViolationType
+                      AND related_entity = @RelatedEntity
+                      AND detected_at >= @DetectedAt - INTERVAL '1 minute'
+                );
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                WorkstationId = workstationId,
+                SourceTable = sourceTable,
+                SourceEventId = sourceEventId,
+                ViolationType = violationType,
+                Severity = severity,
+                Description = description,
+                RelatedEntity = relatedEntity,
+                RuleSource = ruleSource,
+                DetectedAt = detectedAt
+            });
+        }
+
+        private async Task AddIdleViolationAsync(
+    NpgsqlConnection connection,
+    NpgsqlTransaction transaction,
+    int workstationId,
+    int activityPeriodId,
+    int durationSeconds,
+    DateTime startTime,
+    DateTime detectedAt)
+        {
+            string sql = @"
+                INSERT INTO violations
+                    (
+                        workstation_id,
+                        source_table,
+                        source_event_id,
+                        violation_type,
+                        severity,
+                        description,
+                        related_entity,
+                        rule_source,
+                        detected_at,
+                        is_resolved
+                    )
+                SELECT
+                    @WorkstationId,
+                    'activity_periods',
+                    @ActivityPeriodId,
+                    'long_idle',
+                    'low',
+                    @Description,
+                    @RelatedEntity,
+                    'activity_periods',
+                    @DetectedAt,
+                    false
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM violations
+                    WHERE workstation_id = @WorkstationId
+                      AND source_table = 'activity_periods'
+                      AND source_event_id = @ActivityPeriodId
+                      AND violation_type = 'long_idle'
+                );
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                WorkstationId = workstationId,
+                ActivityPeriodId = activityPeriodId,
+                Description = $"Зафиксирован длительный простой: {durationSeconds} секунд",
+                RelatedEntity = $"idle_from_{startTime:yyyy-MM-dd HH:mm:ss}",
+                DetectedAt = detectedAt
+            }, transaction);
         }
     }
 }

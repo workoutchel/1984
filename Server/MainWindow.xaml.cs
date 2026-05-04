@@ -34,6 +34,8 @@ namespace WpfTcpServer
     public partial class MainWindow : Window
     {
         private ObservableCollection<ClientInfo> _clients = new ObservableCollection<ClientInfo>();
+        private ObservableCollection<RuleViewModel> _applicationRules = new();
+        private ObservableCollection<RuleViewModel> _webRules = new();
 
         private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
 
@@ -42,10 +44,19 @@ namespace WpfTcpServer
         private TcpListener? ListenerData;
         private TcpListener? ListenerScreen;
 
+
+
         public MainWindow()
         {
             InitializeComponent();
             ClientsListView.ItemsSource = _clients;
+            ApplicationRulesDataGrid.ItemsSource = _applicationRules;
+            WebRulesDataGrid.ItemsSource = _webRules;
+
+            ApplicationRuleTypeComboBox.SelectedIndex = 0;
+            WebRuleTypeComboBox.SelectedIndex = 0;
+
+            _ = LoadRulesAsync();
 
 
             StartServer(1337, 1338);
@@ -152,5 +163,126 @@ namespace WpfTcpServer
                 client.SendScreenshotRequest();
             }
         }
+
+        private async Task LoadRulesAsync()
+        {
+            _applicationRules.Clear();
+            _webRules.Clear();
+
+            var appRules = await _db.LoadApplicationRulesAsync();
+            var webRules = await _db.LoadWebResourceRulesAsync();
+
+            foreach (var rule in appRules)
+                _applicationRules.Add(rule);
+
+            foreach (var rule in webRules)
+                _webRules.Add(rule);
+        }
+
+        private async void AddApplicationRuleButton_Click(object sender, RoutedEventArgs e)
+        {
+            string value = ApplicationRuleTextBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                MessageBox.Show("Введите имя приложения.");
+                return;
+            }
+
+            string ruleType = ((ComboBoxItem)ApplicationRuleTypeComboBox.SelectedItem).Content.ToString();
+
+            await _db.AddApplicationRuleAsync(value, ruleType);
+
+            ApplicationRuleTextBox.Clear();
+            await LoadRulesAsync();
+        }
+
+        private async void DeleteApplicationRuleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (ApplicationRulesDataGrid.SelectedItem is not RuleViewModel selectedRule)
+            {
+                MessageBox.Show("Выберите правило приложения.");
+                return;
+            }
+
+            await _db.DeleteApplicationRuleAsync(selectedRule.Id);
+            await LoadRulesAsync();
+        }
+
+        private async void AddWebRuleButton_Click(object sender, RoutedEventArgs e)
+        {
+            string value = WebRuleTextBox.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                MessageBox.Show("Введите домен.");
+                return;
+            }
+
+            string ruleType = ((ComboBoxItem)WebRuleTypeComboBox.SelectedItem).Content.ToString();
+
+            await _db.AddWebResourceRuleAsync(value, ruleType);
+
+            WebRuleTextBox.Clear();
+            await LoadRulesAsync();
+        }
+
+        private async void DeleteWebRuleButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (WebRulesDataGrid.SelectedItem is not RuleViewModel selectedRule)
+            {
+                MessageBox.Show("Выберите правило сайта.");
+                return;
+            }
+
+            await _db.DeleteWebResourceRuleAsync(selectedRule.Id);
+            await LoadRulesAsync();
+        }
+
+        private async void ApplicationRulesDataGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
+        {
+            if (e.Row.Item is not RuleViewModel selectedRule)
+                return;
+
+            if (e.EditingElement is CheckBox checkBox)
+            {
+                bool newValue = checkBox.IsChecked == true;
+
+                await _db.UpdateApplicationRuleActiveAsync(
+                    selectedRule.Id,
+                    newValue
+                );
+
+                selectedRule.IsActive = newValue;
+            }
+        }
+
+        private async void WebRulesDataGrid_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
+        {
+            if (e.Row.Item is not RuleViewModel selectedRule)
+                return;
+
+            if (e.EditingElement is CheckBox checkBox)
+            {
+                bool newValue = checkBox.IsChecked == true;
+
+                await _db.UpdateWebResourceRuleActiveAsync(
+                    selectedRule.Id,
+                    newValue
+                );
+
+                selectedRule.IsActive = newValue;
+            }
+        }
+    }
+
+
+    public class RuleViewModel
+    {
+        public int Id { get; set; }
+        public string Value { get; set; } = "";
+        public string RuleType { get; set; } = "";
+        public bool IsActive { get; set; }
+        public DateTime CreatedAt { get; set; }
     }
 }
