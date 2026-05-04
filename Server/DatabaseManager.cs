@@ -802,5 +802,153 @@ namespace WpfTcpServer
                 DetectedAt = detectedAt
             }, transaction);
         }
+
+        public async Task<WorkstationAnalyticsViewModel> GetWorkstationAnalyticsAsync(int workstationId)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string totalsSql = @"
+                SELECT
+                    COALESCE(SUM(CASE WHEN apt.name = 'active' THEN ap.duration_seconds ELSE 0 END), 0) AS ActiveSeconds,
+                    COALESCE(SUM(CASE WHEN apt.name = 'idle' THEN ap.duration_seconds ELSE 0 END), 0) AS IdleSeconds
+                FROM activity_periods ap
+                JOIN activity_period_types apt ON ap.period_type_id = apt.id
+                WHERE ap.workstation_id = @WorkstationId
+                  AND ap.start_time >= CURRENT_DATE;
+            ";
+
+            var totals = await connection.QuerySingleAsync<AnalyticsTotalsRow>(
+                totalsSql,
+                new { WorkstationId = workstationId }
+            );
+
+            int totalSeconds = totals.ActiveSeconds + totals.IdleSeconds;
+
+            double idlePercent = totalSeconds == 0
+                ? 0
+                : Math.Round((double)totals.IdleSeconds / totalSeconds * 100, 2);
+
+            string topAppsSql = @"
+                SELECT
+                    process_name AS ProcessName,
+                    COALESCE(SUM(duration_seconds), 0) AS DurationSeconds
+                FROM window_activity
+                WHERE workstation_id = @WorkstationId
+                  AND start_time >= CURRENT_DATE
+                GROUP BY process_name
+                ORDER BY DurationSeconds DESC
+                LIMIT 5;
+            ";
+
+            var topApps = (await connection.QueryAsync<ApplicationUsageViewModel>(
+                topAppsSql,
+                new { WorkstationId = workstationId }
+            )).ToList();
+
+            string hourlySql = @"
+                SELECT
+                    EXTRACT(HOUR FROM start_time)::int AS Hour,
+                    COALESCE(SUM(duration_seconds), 0) AS ActiveSeconds
+                FROM activity_periods ap
+                JOIN activity_period_types apt ON ap.period_type_id = apt.id
+                WHERE ap.workstation_id = @WorkstationId
+                  AND apt.name = 'active'
+                  AND ap.start_time >= CURRENT_DATE
+                GROUP BY EXTRACT(HOUR FROM start_time)
+                ORDER BY Hour;
+            ";
+
+            var hourly = (await connection.QueryAsync<HourlyActivityViewModel>(
+                hourlySql,
+                new { WorkstationId = workstationId }
+            )).ToList();
+
+            string webSql = @"
+                SELECT COUNT(*)
+                FROM web_activity
+                WHERE workstation_id = @WorkstationId
+                  AND access_time >= CURRENT_DATE;
+            ";
+
+            int webVisits = await connection.ExecuteScalarAsync<int>(
+                webSql,
+                new { WorkstationId = workstationId }
+            );
+
+            string violationsSql = @"
+                SELECT COUNT(*)
+                FROM violations
+                WHERE workstation_id = @WorkstationId
+                  AND detected_at >= CURRENT_DATE;
+            ";
+
+            int violations = await connection.ExecuteScalarAsync<int>(
+                violationsSql,
+                new { WorkstationId = workstationId }
+            );
+
+            return new WorkstationAnalyticsViewModel
+            {
+                ActiveSeconds = totals.ActiveSeconds,
+                IdleSeconds = totals.IdleSeconds,
+                TotalSeconds = totalSeconds,
+                IdlePercent = idlePercent,
+                WebVisits = webVisits,
+                Violations = violations,
+                TopApplications = topApps,
+                HourlyActivity = hourly
+            };
+        }
+    }
+
+    public class AnalyticsTotalsRow
+    {
+        public int ActiveSeconds { get; set; }
+        public int IdleSeconds { get; set; }
+    }
+
+    public class WorkstationAnalyticsViewModel
+    {
+        public int ActiveSeconds { get; set; }
+        public int IdleSeconds { get; set; }
+        public int TotalSeconds { get; set; }
+        public double IdlePercent { get; set; }
+
+        public int WebVisits { get; set; }
+        public int Violations { get; set; }
+
+        public List<ApplicationUsageViewModel> TopApplications { get; set; } = new();
+        public List<HourlyActivityViewModel> HourlyActivity { get; set; } = new();
+
+        public double ActivePercent =>
+            TotalSeconds == 0 ? 0 : Math.Round((double)ActiveSeconds / TotalSeconds * 100, 2);
+    }
+
+    public class ApplicationUsageViewModel
+    {
+        public string ProcessName { get; set; } = "";
+        public int DurationSeconds { get; set; }
+
+        public string DurationText => FormatDuration(DurationSeconds);
+
+        public static string FormatDuration(int seconds)
+        {
+            TimeSpan time = TimeSpan.FromSeconds(seconds);
+
+            if (time.TotalHours >= 1)
+                return $"{(int)time.TotalHours} ч {time.Minutes} мин";
+
+            return $"{time.Minutes} мин {time.Seconds} сек";
+        }
+    }
+
+    public class HourlyActivityViewModel
+    {
+        public int Hour { get; set; }
+        public int ActiveSeconds { get; set; }
+
+        public string HourText => $"{Hour:00}:00";
+        public string DurationText => ApplicationUsageViewModel.FormatDuration(ActiveSeconds);
     }
 }

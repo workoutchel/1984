@@ -300,6 +300,33 @@ namespace WpfTcpServer
                 selectedRule.IsActive = newValue;
             }
         }
+        private async void AnalyticsButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button)
+                return;
+
+            if (button.Tag is not ClientInfo client)
+                return;
+
+            if (client.WorkstationId <= 0)
+            {
+                MessageBox.Show("Для клиента не найден идентификатор рабочей станции.");
+                return;
+            }
+
+            try
+            {
+                var analytics = await _db.GetWorkstationAnalyticsAsync(client.WorkstationId);
+
+                var window = new AnalyticsWindow(client, analytics);
+                window.Owner = this;
+                window.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Ошибка загрузки аналитики:\n" + ex);
+            }
+        }
     }
 
 
