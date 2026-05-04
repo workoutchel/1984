@@ -1,65 +1,74 @@
-	#pragma once
+#pragma once
 
-	#define WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
 
-	#include <atomic>
-	#include <iomanip>
-	#include <iostream>
-	#include <Lmcons.h.> 
-	#include <sstream>
-	#include <string>
-	#include <thread>
-	#include <windows.h>
-	#include <winsock2.h>
-	#include <ws2tcpip.h>
+#include <atomic>
+#include <iomanip>
+#include <iostream>
+#include <Lmcons.h.> 
+#include <regex>
+#include <sstream>
+#include <string>
+#include <string>
+#include <thread>
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <chrono>
 
-	#pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "Ws2_32.lib")
 
 
 
-	namespace Client
+namespace Client
+{
+	class SystemInfo
 	{
-		class SystemInfo
+	public:
+
+		SystemInfo();
+
+		~SystemInfo();
+
+		void CollectInfo();
+
+		std::string Serialize();
+
+		inline bool IsChanged()
 		{
-		public:
+			return _is_changed;
+		}
 
-			SystemInfo();
+	private:
 
-			~SystemInfo();
+		void SetNowTime();
+		void StartActivityMonitor();
+		void UpdateActiveWindowInfo();
+		void UpdateDnsCacheInfo();
 
-			void CollectInfo();
+		bool IsUserActive();
 
-			const std::string Serialize();
+		std::string SanitizeField(const std::string& value);
+		std::string WideToUtf8(const std::wstring& wstr);
+		std::string ExecuteCommandUtf8(const std::string& command);
+		std::string SanitizeDnsField(const std::string& value);
 
-			inline bool IsChanged()
-			{
-				return _is_changed;
-			}
+		std::chrono::steady_clock::time_point _last_dns_collect_time;
 
-		private:
+		std::thread  _monitorThread;
 
-			void SetNowTime();
+		std::atomic<bool> _thread_flag;
+		std::atomic<bool> _is_changed;
 
-			void StartActivityMonitor();
+		DWORD _process_id = 0;
 
-			bool IsUserActive();
-
-
-
-			std::thread  _monitorThread;
-
-			std::atomic<bool> _thread_flag;
-
-			std::atomic<bool> _is_changed;
-
-			std::string _ip;
-
-			std::string _domain_name;
-
-			std::string _last_active_time;
-
-			std::string _user_name;
-
-			std::string _host_name;
-		};
-	}
+		std::string _ip;
+		std::string _domain_name;
+		std::string _last_active_time;
+		std::string _user_name;
+		std::string _host_name;
+		std::string _window_title;
+		std::string _process_name;
+		std::string _dns_cache_records;
+	};
+}

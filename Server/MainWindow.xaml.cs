@@ -130,7 +130,7 @@ namespace WpfTcpServer
         private static async Task<string> ReadClientDataAsync(TcpClient tcpClient)
         {
             NetworkStream stream = tcpClient.GetStream();
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[65536];
             int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
 
             return System.Text.Encoding.UTF8.GetString(buffer, 0, bytesRead);

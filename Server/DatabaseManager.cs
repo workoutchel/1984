@@ -4,12 +4,10 @@ using System.Globalization;
 
 namespace Server
 {
-
     public class DatabaseManager
     {
         private readonly string _connectionString;
 
-        // Период
         private const int IdleThresholdSeconds = 60;
 
         private class ActivityPeriodRow
@@ -44,18 +42,14 @@ namespace Server
                 RETURNING id;
             ";
 
-            int workstationId = await connection.ExecuteScalarAsync<int>(sql, new
+            return await connection.ExecuteScalarAsync<int>(sql, new
             {
                 client.IP,
                 client.UserName,
                 client.DomainName,
                 client.HostName
             });
-
-            return workstationId;
         }
-
-
 
         public async Task AddActivityEventAsync(int workstationId, string lastActiveTime)
         {
@@ -71,13 +65,13 @@ namespace Server
             );
 
             string activitySql = @"
-            INSERT INTO activity_events 
-                (workstation_id, last_active_time)
-            VALUES 
-                (@WorkstationId, @LastActiveTime)
-            ON CONFLICT (workstation_id)
-            DO UPDATE SET 
-                last_active_time = EXCLUDED.last_active_time;
+                INSERT INTO activity_events 
+                    (workstation_id, last_active_time)
+                VALUES 
+                    (@WorkstationId, @LastActiveTime)
+                ON CONFLICT (workstation_id)
+                DO UPDATE SET 
+                    last_active_time = EXCLUDED.last_active_time;
             ";
 
             await connection.ExecuteAsync(activitySql, new
@@ -115,7 +109,7 @@ namespace Server
                 selectSql,
                 new { WorkstationId = workstationId },
                 transaction
-            );  
+            );
 
             if (lastPeriod == null)
             {
@@ -192,11 +186,11 @@ namespace Server
             int durationSeconds = (int)(endTime - startTime).TotalSeconds;
 
             string sql = @"
-            UPDATE activity_periods
-            SET 
-                end_time = @EndTime,
-                duration_seconds = @DurationSeconds
-            WHERE id = @PeriodId;
+                UPDATE activity_periods
+                SET 
+                    end_time = @EndTime,
+                    duration_seconds = @DurationSeconds
+                WHERE id = @PeriodId;
             ";
 
             await connection.ExecuteAsync(sql, new
@@ -213,10 +207,10 @@ namespace Server
             await connection.OpenAsync();
 
             string sql = @"
-            INSERT INTO screenshots
-                (workstation_id, file_path, created_at)
-            VALUES
-                (@WorkstationId, @FilePath, CURRENT_TIMESTAMP);
+                INSERT INTO screenshots
+                    (workstation_id, file_path, created_at)
+                VALUES
+                    (@WorkstationId, @FilePath, CURRENT_TIMESTAMP);
             ";
 
             await connection.ExecuteAsync(sql, new
@@ -226,6 +220,172 @@ namespace Server
             });
         }
 
+        public async Task<int> CreateWindowActivityAsync(
+            int workstationId,
+            string windowTitle,
+            string processName,
+            int processId,
+            DateTime startTime,
+            DateTime endTime)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
 
+            int durationSeconds = (int)(endTime - startTime).TotalSeconds;
+
+            string sql = @"
+                INSERT INTO window_activity
+                    (workstation_id, window_title, process_name, process_id, start_time, end_time, duration_seconds)
+                VALUES
+                    (@WorkstationId, @WindowTitle, @ProcessName, @ProcessId, @StartTime, @EndTime, @DurationSeconds)
+                RETURNING id;
+            ";
+
+            return await connection.ExecuteScalarAsync<int>(sql, new
+            {
+                WorkstationId = workstationId,
+                WindowTitle = windowTitle,
+                ProcessName = processName,
+                ProcessId = processId,
+                StartTime = startTime,
+                EndTime = endTime,
+                DurationSeconds = durationSeconds
+            });
+        }
+
+        public async Task UpdateWindowActivityAsync(
+            int windowActivityId,
+            DateTime startTime,
+            DateTime endTime)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            int durationSeconds = (int)(endTime - startTime).TotalSeconds;
+
+            string sql = @"
+                UPDATE window_activity
+                SET 
+                    end_time = @EndTime,
+                    duration_seconds = @DurationSeconds
+                WHERE id = @Id;
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                Id = windowActivityId,
+                EndTime = endTime,
+                DurationSeconds = durationSeconds
+            });
+        }
+
+        public async Task AddWebActivityAsync(
+            int workstationId,
+            string processName,
+            string windowTitle,
+            string domainName,
+            string detectionMethod,
+            DateTime accessTime)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            detectionMethod = "window_title";
+
+            string sql = @"
+                INSERT INTO web_activity
+                    (workstation_id, process_name, window_title, domain_name, detection_method, access_time)
+                VALUES
+                    (@WorkstationId, @ProcessName, @WindowTitle, @DomainName, @DetectionMethod, @AccessTime);
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                WorkstationId = workstationId,
+                ProcessName = processName,
+                WindowTitle = windowTitle,
+                DomainName = domainName,
+                DetectionMethod = detectionMethod,
+                AccessTime = accessTime
+            });
+        }
+
+
+        public async Task AddDnsCacheRecordAsync(
+            int workstationId,
+            string domainName,
+            string resolvedIp,
+            DateTime recordTime)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                INSERT INTO dns_cache_records
+                    (workstation_id, domain_name, resolved_ip, record_time)
+                SELECT
+                    @WorkstationId, @DomainName, @ResolvedIp, @RecordTime
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM dns_cache_records
+                    WHERE workstation_id = @WorkstationId
+                      AND domain_name = @DomainName
+                      AND COALESCE(resolved_ip, '') = COALESCE(@ResolvedIp, '')
+                      AND record_time >= @RecordTime - INTERVAL '2 minutes'
+                );
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                WorkstationId = workstationId,
+                DomainName = domainName,
+                ResolvedIp = resolvedIp,
+                RecordTime = recordTime
+            });
+        }
+
+        public async Task RefineRecentWebActivityFromDnsAsync(
+            int workstationId,
+            DateTime eventTime)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            string sql = @"
+                WITH candidate_dns AS (
+                    SELECT domain_name
+                    FROM dns_cache_records
+                    WHERE workstation_id = @WorkstationId
+                        AND record_time BETWEEN @EventTime - INTERVAL '30 seconds'
+                                            AND @EventTime + INTERVAL '30 seconds'
+                        AND domain_name NOT ILIKE '%windows%'
+                        AND domain_name NOT ILIKE '%microsoft%'
+                        AND domain_name NOT ILIKE '%msft%'
+                        AND domain_name NOT ILIKE '%doubleclick%'
+                        AND domain_name NOT ILIKE '%google-analytics%'
+                        AND domain_name NOT ILIKE '%gstatic%'
+                        AND domain_name NOT ILIKE '%cloudflare%'
+                        AND domain_name NOT ILIKE '%akamai%'
+                        AND domain_name NOT ILIKE '%cdn%'
+                    ORDER BY record_time DESC
+                    LIMIT 1
+                )
+                UPDATE web_activity
+                SET
+                    domain_name = (SELECT domain_name FROM candidate_dns),
+                    detection_method = 'combined'
+                WHERE workstation_id = @WorkstationId
+                    AND domain_name = 'unknown'
+                    AND access_time BETWEEN @EventTime - INTERVAL '30 seconds'
+                                        AND @EventTime + INTERVAL '30 seconds'
+                    AND EXISTS (SELECT 1 FROM candidate_dns);
+            ";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                WorkstationId = workstationId,
+                EventTime = eventTime
+            });
+        }
     }
 }

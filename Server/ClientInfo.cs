@@ -1,8 +1,12 @@
 ﻿using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Imaging;
+
+
 
 namespace Server
 {
@@ -18,6 +22,10 @@ namespace Server
 
         public int WorkstationId { get; private set; }
 
+        public string WindowTitle { get; private set; }
+        public string ProcessName { get; private set; }
+        public int ProcessId { get; private set; }
+
         public TcpClient? DataClient { get; private set; }
         public NetworkStream? DataStream { get; private set; }
 
@@ -26,22 +34,66 @@ namespace Server
 
         private DatabaseManager? _db;
 
+        private string _currentWindowTitle = "";
+        private string _currentProcessName = "";
+        private int _currentProcessId = 0;
+
+        private DateTime _currentWindowStartTime;
+        private int? _currentWindowActivityId = null;
+
+        private const int MinWindowDurationSeconds = 10;
 
 
-        public ClientInfo(string iP, string userName, string domainName, string hostName, string lastActiveTime)
+
+        public ClientInfo(
+            string iP,
+            string userName,
+            string domainName,
+            string hostName,
+            string lastActiveTime,
+            string windowTitle,
+            string processName,
+            int processId)
         {
             IP = iP;
             UserName = userName;
             DomainName = domainName;
             HostName = hostName;
             LastActiveTime = lastActiveTime;
+            WindowTitle = windowTitle;
+            ProcessName = processName;
+            ProcessId = processId;
         }
 
         public static ClientInfo ParseClientInfo(string data)
         {
             string[] parts = data.Split('|');
 
-            return new ClientInfo(parts[0].Trim(), parts[1].Trim(), parts[2].Trim(), parts[3].Trim(), parts[4].Trim());
+            string ip = parts[0].Trim();
+            string userName = parts[1].Trim();
+            string domainName = parts[2].Trim();
+            string hostName = parts[3].Trim();
+            string lastActiveTime = parts[4].Trim();
+
+            string windowTitle = parts.Length > 5 ? parts[5].Trim() : "";
+            string processName = parts.Length > 6 ? parts[6].Trim() : "";
+            int processId = 0;
+
+            if (parts.Length > 7)
+            {
+                int.TryParse(parts[7].Trim(), out processId);
+            }
+
+            return new ClientInfo(
+                ip,
+                userName,
+                domainName,
+                hostName,
+                lastActiveTime,
+                windowTitle,
+                processName,
+                processId
+            );
         }
 
 
@@ -64,7 +116,7 @@ namespace Server
 
         private async Task ReceiveDataAsync()
         {
-            byte[] buffer = new byte[1024];
+            byte[] buffer = new byte[65536];
 
             try
             {
@@ -85,11 +137,55 @@ namespace Server
                             {
                                 string lastActiveTime = parts[4].Trim();
 
+                                string windowTitle = parts.Length > 5 ? parts[5].Trim() : "";
+                                string processName = parts.Length > 6 ? parts[6].Trim() : "";
+
+                                int processId = 0;
+                                if (parts.Length > 7)
+                                {
+                                    int.TryParse(parts[7].Trim(), out processId);
+                                }
+
+                                string dnsCacheData = parts.Length > 8 ? parts[8].Trim() : "";
+                                //MessageBox.Show($"parts {parts.Length}");
+
+                                //MessageBox.Show($"DNS data received. {dnsCacheData}");
+
+                                if (!string.IsNullOrWhiteSpace(dnsCacheData))
+                                {
+                                   // MessageBox.Show($"DNS data received. Length = {dnsCacheData.Length}");
+                                }
+
                                 UpdateLastActiveTime(lastActiveTime);
+                                UpdateWindowInfo(windowTitle, processName, processId);
 
                                 if (_db != null)
                                 {
                                     await _db.AddActivityEventAsync(WorkstationId, lastActiveTime);
+
+                                    DateTime parsedTime = DateTime.ParseExact(
+                                        lastActiveTime,
+                                        "yyyy-MM-dd HH:mm:ss",
+                                        CultureInfo.InvariantCulture
+                                    );
+
+                                    await HandleWindowActivityAsync(
+                                        windowTitle,
+                                        processName,
+                                        processId,
+                                        parsedTime
+                                    );
+
+                                    await HandleWebActivityEventAsync(
+                                        windowTitle,
+                                        processName,
+                                        parsedTime
+                                    );
+
+                                    await HandleDnsCacheRecordsAsync(
+                                        dnsCacheData,
+                                        parsedTime
+                                    );
                                 }
                             }
                         }
@@ -242,6 +338,167 @@ namespace Server
             OnPropertyChanged(nameof(IsConnected));
         }
 
+        public void UpdateWindowInfo(string windowTitle, string processName, int processId)
+        {
+            WindowTitle = windowTitle;
+            ProcessName = processName;
+            ProcessId = processId;
+
+            OnPropertyChanged(nameof(WindowTitle));
+            OnPropertyChanged(nameof(ProcessName));
+            OnPropertyChanged(nameof(ProcessId));
+        }
+
+        private async Task HandleWindowActivityAsync(
+            string windowTitle,
+            string processName,
+            int processId,
+            DateTime eventTime)
+        {
+            bool isSameWindow =
+                _currentWindowTitle == windowTitle &&
+                _currentProcessName == processName &&
+                _currentProcessId == processId;
+
+            if (!isSameWindow)
+            {
+                _currentWindowTitle = windowTitle;
+                _currentProcessName = processName;
+                _currentProcessId = processId;
+                _currentWindowStartTime = eventTime;
+                _currentWindowActivityId = null;
+
+                return;
+            }
+
+            int durationSeconds = (int)(eventTime - _currentWindowStartTime).TotalSeconds;
+
+            if (durationSeconds < MinWindowDurationSeconds)
+                return;
+
+            if (_db == null)
+                return;
+
+            if (_currentWindowActivityId == null)
+            {
+                _currentWindowActivityId = await _db.CreateWindowActivityAsync(
+                    WorkstationId,
+                    windowTitle,
+                    processName,
+                    processId,
+                    _currentWindowStartTime,
+                    eventTime
+                );
+            }
+            else
+            {
+                await _db.UpdateWindowActivityAsync(
+                    _currentWindowActivityId.Value,
+                    _currentWindowStartTime,
+                    eventTime
+                );
+            }
+        }
+        private async Task HandleWebActivityEventAsync(
+            string windowTitle,
+            string processName,
+            DateTime eventTime)
+        {
+            if (_db == null)
+                return;
+
+            if (!IsBrowserProcess(processName))
+                return;
+
+            string domain = ExtractDomainFromWindowTitle(windowTitle);
+            string detectionMethod = "window_title";
+
+            if (string.IsNullOrWhiteSpace(domain))
+            {
+                domain = "unknown";
+                detectionMethod = "window_title";
+            }
+
+            await _db.AddWebActivityAsync(
+                WorkstationId,
+                processName,
+                windowTitle,
+                domain,
+                detectionMethod,
+                eventTime
+            );
+        }
+
+        private static bool IsBrowserProcess(string processName)
+        {
+            if (string.IsNullOrWhiteSpace(processName))
+                return false;
+
+            string name = Path.GetFileName(processName).ToLower();
+
+            return new[]
+            {
+                "chrome.exe",
+                "msedge.exe",
+                "firefox.exe",
+                "opera.exe",
+                "opera_gx.exe",
+                "brave.exe",
+                "vivaldi.exe",
+                "iexplore.exe",
+                "browser.exe"
+            }.Contains(name);
+        }
+
+        private static string ExtractDomainFromWindowTitle(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+                return "";
+
+            var match = Regex.Match(
+                title.ToLower(),
+                @"([a-z0-9\-]+\.[a-z]{2,})"
+            );
+
+            return match.Success ? match.Value : "";
+        }
+
+        private async Task HandleDnsCacheRecordsAsync(string dnsCacheData, DateTime recordTime)
+        {
+            if (_db == null)
+                return;
+
+            if (string.IsNullOrWhiteSpace(dnsCacheData))
+                return;
+
+            string[] records = dnsCacheData.Split(';', StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (string record in records)
+            {
+                string[] parts = record.Split(',', 2);
+
+                if (parts.Length == 0)
+                    continue;
+
+                string domainName = parts[0].Trim();
+                string resolvedIp = parts.Length > 1 ? parts[1].Trim() : "";
+
+                if (string.IsNullOrWhiteSpace(domainName))
+                    continue;
+
+                await _db.AddDnsCacheRecordAsync(
+                    WorkstationId,
+                    domainName,
+                    resolvedIp,
+                    recordTime
+                );
+            }
+
+            await _db.RefineRecentWebActivityFromDnsAsync(
+                WorkstationId,
+                recordTime
+            );
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -250,4 +507,6 @@ namespace Server
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
     }
+
+
 }
