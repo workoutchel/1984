@@ -16,36 +16,26 @@
 #pragma comment(lib, "Secur32.lib")
 #pragma comment(lib, "Crypt32.lib")
 
-
 namespace Client
 {
     class NetworkManager
     {
     public:
-
         NetworkManager(int port_data, int port_screen, const char* ip);
-
         ~NetworkManager();
 
-
         bool ConnectData();
-
         bool ConnectScreen();
 
         inline int GetDataPort() const { return _port_data; }
-
         inline int GetScreenPort() const { return _port_screen; }
-
         inline bool IsConnected() { return is_connected.load(); }
 
         void SendData(const std::string& data) const;
-
         void WaitForScreenshotRequest();
-
         void SendScreenshot(const std::vector<BYTE>& vector) const;
 
     private:
-
         bool InitializeTlsForSocket(
             SOCKET socket,
             CredHandle& credHandle,
@@ -56,7 +46,6 @@ namespace Client
 
         bool SendTlsData(const std::string& data) const;
         bool SendTlsScreenBytes(const char* data, size_t size) const;
-
         bool ReceiveTlsScreenData(std::string& result);
 
         const char* _ip;

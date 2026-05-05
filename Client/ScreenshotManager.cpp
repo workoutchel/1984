@@ -1,21 +1,17 @@
 #include "ScreenshotManager.hpp"
 
-
-
 namespace Client
 {
-	ScreenshotManager::ScreenshotManager() 
-	{
-		Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-		Gdiplus::GdiplusStartup(&_gdiplusToken, &gdiplusStartupInput, NULL);
-	}
+    ScreenshotManager::ScreenshotManager()
+    {
+        Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+        Gdiplus::GdiplusStartup(&_gdiplusToken, &gdiplusStartupInput, NULL);
+    }
 
-	ScreenshotManager::~ScreenshotManager()
-	{
-		Gdiplus::GdiplusShutdown(_gdiplusToken);
-	}
-
-
+    ScreenshotManager::~ScreenshotManager()
+    {
+        Gdiplus::GdiplusShutdown(_gdiplusToken);
+    }
 
     int ScreenshotManager::GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
     {
@@ -29,7 +25,8 @@ namespace Client
         if (size == 0)
             return -1;
 
-        pImageCodecInfo = (Gdiplus::ImageCodecInfo*)(malloc(size));
+        pImageCodecInfo = (Gdiplus::ImageCodecInfo*)malloc(size);
+
         if (pImageCodecInfo == NULL)
             return -1;
 
@@ -50,7 +47,7 @@ namespace Client
     }
 
     const std::vector<uint8_t> ScreenshotManager::CaptureScreenshot()
-   {
+    {
         std::vector<uint8_t> byteArray;
 
         int32_t screenX = 1920;
@@ -80,10 +77,12 @@ namespace Client
 
         LARGE_INTEGER liZero = {};
         ULARGE_INTEGER liSize;
+
         pStream->Seek(liZero, STREAM_SEEK_END, &liSize);
         pStream->Seek(liZero, STREAM_SEEK_SET, NULL);
 
         byteArray.resize((size_t)liSize.QuadPart);
+
         ULONG bytesRead = 0;
         pStream->Read(byteArray.data(), (ULONG)byteArray.size(), &bytesRead);
 
@@ -91,5 +90,5 @@ namespace Client
         DeleteObject(hBitmap);
 
         return byteArray;
-   }
+    }
 }

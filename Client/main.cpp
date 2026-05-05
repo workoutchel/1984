@@ -1,6 +1,13 @@
 #include "MainClient.hpp"
 
 
+// tcp-порты
+#define PORT_DATA 1337
+#define PORT_SCREEN 1338
+// ip сервера
+#define SERVER_IP "10.66.66.2"
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 //	Если необходимо включить отображение консоли для отладки, необходимо строку 
@@ -15,15 +22,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 {
 	while (true)
 	{
-		////////////////////////////////////////////////////////////////////////////////////////////////////
-		//
-		//	Вставить сюда необходимые порты(один для отслеживания активности, второй для передачи скриншота) и IP сервера в локальной сети
-		//										   |
-		//										   ↓
-		//EmployeeMonitoring::MainClient client(1337, 1338, "192.168.1.73");
-		Client::MainClient client(1337, 1338, "10.66.66.2");
-
-		//client.AddToStartup();
+		Client::MainClient client(PORT_DATA, PORT_SCREEN, SERVER_IP);
 
 		client.Start();
 	}

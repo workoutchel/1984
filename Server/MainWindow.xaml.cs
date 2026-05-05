@@ -1,15 +1,12 @@
-﻿using WpfTcpServer;
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
-using System.Security.Cryptography.X509Certificates;
-using System.Net.Security;
-
-
 
 namespace WpfTcpServer
 {
@@ -19,7 +16,9 @@ namespace WpfTcpServer
         {
             if (value is bool boolValue)
             {
-                return boolValue ? System.Windows.Media.Brushes.Green : System.Windows.Media.Brushes.Red;
+                return boolValue
+                    ? System.Windows.Media.Brushes.Green
+                    : System.Windows.Media.Brushes.Red;
             }
 
             return System.Windows.Media.Brushes.Transparent;
@@ -28,19 +27,16 @@ namespace WpfTcpServer
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
         {
             throw new NotImplementedException();
-        }       
+        }
     }
-
-
 
     public partial class MainWindow : Window
     {
-        private ObservableCollection<ClientInfo> _clients = new ObservableCollection<ClientInfo>();
-        private ObservableCollection<RuleViewModel> _applicationRules = new();
-        private ObservableCollection<RuleViewModel> _webRules = new();
+        private readonly ObservableCollection<ClientInfo> _clients = new ObservableCollection<ClientInfo>();
+        private readonly ObservableCollection<RuleViewModel> _applicationRules = new();
+        private readonly ObservableCollection<RuleViewModel> _webRules = new();
 
-        private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
-
+        private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
         private readonly DatabaseManager _db = new DatabaseManager();
 
         private TcpListener? ListenerData;
@@ -51,6 +47,7 @@ namespace WpfTcpServer
         public MainWindow()
         {
             InitializeComponent();
+
             ClientsListView.ItemsSource = _clients;
             ApplicationRulesDataGrid.ItemsSource = _applicationRules;
             WebRulesDataGrid.ItemsSource = _webRules;
@@ -62,9 +59,6 @@ namespace WpfTcpServer
 
             StartServer(1337, 1338);
         }
-    
-
-
 
         private void StartServer(int portData, int portScreen)
         {
@@ -134,7 +128,6 @@ namespace WpfTcpServer
                     );
 
                     string clientData = await ReadClientDataAsync(sslDataStream);
-
                     ClientInfo clientInfo = ClientInfo.ParseClientInfo(clientData);
 
                     int workstationId = await _db.AddOrUpdateWorkstationAsync(clientInfo);
@@ -146,11 +139,26 @@ namespace WpfTcpServer
 
                         if (existingClient != null)
                         {
-                            existingClient.Connect(tcpClientData, sslDataStream, tcpClientScreen, sslScreenStream, workstationId, _db);
+                            existingClient.Connect(
+                                tcpClientData,
+                                sslDataStream,
+                                tcpClientScreen,
+                                sslScreenStream,
+                                workstationId,
+                                _db
+                            );
                         }
                         else
                         {
-                            clientInfo.Connect(tcpClientData, sslDataStream, tcpClientScreen, sslScreenStream, workstationId, _db);
+                            clientInfo.Connect(
+                                tcpClientData,
+                                sslDataStream,
+                                tcpClientScreen,
+                                sslScreenStream,
+                                workstationId,
+                                _db
+                            );
+
                             _clients.Add(clientInfo);
                         }
                     });
@@ -159,7 +167,8 @@ namespace WpfTcpServer
                 {
                     MessageBox.Show(ex.ToString());
 
-                    if (cancellationToken.IsCancellationRequested) break;
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
                 }
             }
         }
@@ -173,8 +182,6 @@ namespace WpfTcpServer
             return System.Text.Encoding.UTF8.GetString(buffer, 0, bytesRead);
         }
 
-
-
         private void RequestScreenshotButton_Click(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
@@ -185,7 +192,6 @@ namespace WpfTcpServer
             if (client != null && client.IsConnected)
             {
                 Task.Run(() => client.WaitScreenshotAsync());
-
                 client.SendScreenshotRequest();
             }
         }
@@ -300,6 +306,7 @@ namespace WpfTcpServer
                 selectedRule.IsActive = newValue;
             }
         }
+
         private async void AnalyticsButton_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not Button button)
@@ -328,7 +335,6 @@ namespace WpfTcpServer
             }
         }
     }
-
 
     public class RuleViewModel
     {

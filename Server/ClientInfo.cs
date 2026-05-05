@@ -5,14 +5,13 @@ using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Imaging;
-using System.Net.Security;
-
-
 
 namespace WpfTcpServer
 {
     public class ClientInfo : INotifyPropertyChanged
     {
+        private const int MinWindowDurationSeconds = 10;
+
         public string IP { get; }
         public string UserName { get; }
         public string DomainName { get; }
@@ -20,7 +19,6 @@ namespace WpfTcpServer
         public string LastActiveTime { get; private set; }
 
         public bool IsConnected { get; private set; }
-
         public int WorkstationId { get; private set; }
 
         public string WindowTitle { get; private set; }
@@ -41,10 +39,6 @@ namespace WpfTcpServer
 
         private DateTime _currentWindowStartTime;
         private int? _currentWindowActivityId = null;
-
-        private const int MinWindowDurationSeconds = 10;
-
-
 
         public ClientInfo(
             string iP,
@@ -78,6 +72,7 @@ namespace WpfTcpServer
 
             string windowTitle = parts.Length > 5 ? parts[5].Trim() : "";
             string processName = parts.Length > 6 ? parts[6].Trim() : "";
+
             int processId = 0;
 
             if (parts.Length > 7)
@@ -96,7 +91,6 @@ namespace WpfTcpServer
                 processId
             );
         }
-
 
         public void Connect(
             TcpClient tcpClientData,
@@ -129,7 +123,6 @@ namespace WpfTcpServer
             {
                 while (IsConnected && DataStream != null && DataClient != null && DataClient.Connected)
                 {
-
                     int bytesRead = await DataStream.ReadAsync(buffer, 0, buffer.Length);
 
                     if (bytesRead > 0)
@@ -143,11 +136,11 @@ namespace WpfTcpServer
                             if (parts.Length > 4)
                             {
                                 string lastActiveTime = parts[4].Trim();
-
                                 string windowTitle = parts.Length > 5 ? parts[5].Trim() : "";
                                 string processName = parts.Length > 6 ? parts[6].Trim() : "";
 
                                 int processId = 0;
+
                                 if (parts.Length > 7)
                                 {
                                     int.TryParse(parts[7].Trim(), out processId);
@@ -196,7 +189,6 @@ namespace WpfTcpServer
                         Disconnect();
                         break;
                     }
-
                 }
             }
             catch
@@ -219,6 +211,7 @@ namespace WpfTcpServer
                 {
                     string message = "SCREENSHOT_PLEASE";
                     byte[] messageBytes = System.Text.Encoding.UTF8.GetBytes(message);
+
                     await ScreenStream.WriteAsync(messageBytes, 0, messageBytes.Length);
                     ScreenStream.Flush();
                 }
@@ -253,12 +246,20 @@ namespace WpfTcpServer
             long imageSize = BitConverter.ToInt64(headerBuffer, sizeof(int) * 2);
 
             byte[] imageBuffer = new byte[imageSize];
+
             bytesRead = 0;
 
             while (bytesRead < imageSize)
             {
-                int read = await stream.ReadAsync(imageBuffer, bytesRead, (int)(imageSize - bytesRead));
-                if (read == 0) break;
+                int read = await stream.ReadAsync(
+                    imageBuffer,
+                    bytesRead,
+                    (int)(imageSize - bytesRead)
+                );
+
+                if (read == 0)
+                    break;
+
                 bytesRead += read;
             }
 
@@ -328,7 +329,6 @@ namespace WpfTcpServer
                 };
 
                 window.Content = imgControl;
-
                 window.ShowDialog();
             });
         }
@@ -430,6 +430,7 @@ namespace WpfTcpServer
                 }
             }
         }
+
         private async Task HandleWebActivityEventAsync(
             string windowTitle,
             string processName,
@@ -460,6 +461,7 @@ namespace WpfTcpServer
             );
 
             string webRule = await _db.CheckWebResourceRuleAsync(domain);
+
             if (webRule == "blacklist")
             {
                 await _db.AddViolationAsync(
@@ -554,6 +556,4 @@ namespace WpfTcpServer
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
     }
-
-
 }

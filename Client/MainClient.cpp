@@ -1,74 +1,80 @@
 #include "MainClient.hpp"
 
-
-
 namespace Client
 {
-	MainClient::MainClient(const int port_data, const int port_screen, const char* ip) : _NetworkManagerPtr(new NetworkManager(port_data, port_screen, ip)), _SystemInfoPtr(new SystemInfo())
-	{}
+    MainClient::MainClient(const int port_data, const int port_screen, const char* ip)
+        : _NetworkManagerPtr(new NetworkManager(port_data, port_screen, ip)),
+        _SystemInfoPtr(new SystemInfo())
+    {
+    }
 
-	MainClient::~MainClient() 
-	{
-		delete _NetworkManagerPtr;
-		delete _SystemInfoPtr;
-	}
+    MainClient::~MainClient()
+    {
+        delete _NetworkManagerPtr;
+        delete _SystemInfoPtr;
+    }
 
-	
-	void MainClient::AddToStartup()
-	{
-		TCHAR szPath[MAX_PATH];
-		GetModuleFileName(NULL, szPath, MAX_PATH);
+    void MainClient::AddToStartup()
+    {
+        TCHAR szPath[MAX_PATH];
+        GetModuleFileName(NULL, szPath, MAX_PATH);
 
-		HKEY hKey;
-		LONG result = RegOpenKeyEx(HKEY_CURRENT_USER,
-			_T("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
-			0,
-			KEY_WRITE,
-			&hKey);
+        HKEY hKey;
+        LONG result = RegOpenKeyEx(
+            HKEY_CURRENT_USER,
+            _T("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            0,
+            KEY_WRITE,
+            &hKey
+        );
 
-		if (result == ERROR_SUCCESS)
-		{
-			RegSetValueEx(hKey,
-				_T("MyProgram"),      
-				0,
-				REG_SZ,
-				(uint8_t*)szPath,         
-				(lstrlen(szPath) + 1) * sizeof(TCHAR));
+        if (result == ERROR_SUCCESS)
+        {
+            RegSetValueEx(
+                hKey,
+                _T("MyProgram"),
+                0,
+                REG_SZ,
+                (uint8_t*)szPath,
+                (lstrlen(szPath) + 1) * sizeof(TCHAR)
+            );
 
-			RegCloseKey(hKey);
-		}
-	}
-	
+            RegCloseKey(hKey);
+        }
+    }
 
-	void MainClient::Start()
-	{
-		_SystemInfoPtr->CollectInfo();
+    void MainClient::Start()
+    {
+        _SystemInfoPtr->CollectInfo();
 
-		if (!_NetworkManagerPtr->ConnectData())
-		{
-			std::cerr << "Ошибка при подключению по порту:" << _NetworkManagerPtr->GetDataPort() << std::endl;
-		}
+        if (!_NetworkManagerPtr->ConnectData())
+        {
+            std::cerr << "Ошибка при подключению по порту:"
+                << _NetworkManagerPtr->GetDataPort() << std::endl;
+        }
+        else if (!_NetworkManagerPtr->ConnectScreen())
+        {
+            std::cerr << "Ошибка при подключению по порту:"
+                << _NetworkManagerPtr->GetScreenPort() << std::endl;
+        }
+        else
+        {
+            std::thread screenshotThread(
+                &NetworkManager::WaitForScreenshotRequest,
+                _NetworkManagerPtr
+            );
 
-		else if(!_NetworkManagerPtr->ConnectScreen())
-		{
-			std::cerr << "Ошибка при подключению по порту:" << _NetworkManagerPtr->GetScreenPort() << std::endl;
-		}
+            while (_NetworkManagerPtr->IsConnected())
+            {
+                if (_SystemInfoPtr->IsChanged())
+                {
+                    _NetworkManagerPtr->SendData(_SystemInfoPtr->Serialize());
+                }
 
-		else	
-		{
-			std::thread screenshotThread(&NetworkManager::WaitForScreenshotRequest, _NetworkManagerPtr);
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            }
 
-			while (_NetworkManagerPtr->IsConnected())
-			{
-				if (_SystemInfoPtr->IsChanged())
-				{
-					_NetworkManagerPtr->SendData(_SystemInfoPtr->Serialize());
-				}
-
-				std::this_thread::sleep_for(std::chrono::milliseconds(500));
-			}
-
-			screenshotThread.join();
-		}
-	}
+            screenshotThread.join();
+        }
+    }
 }

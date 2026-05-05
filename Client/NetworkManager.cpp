@@ -1,10 +1,14 @@
 #include "NetworkManager.hpp"
 
-
-
 namespace Client
 {
-    NetworkManager::NetworkManager(int port_data, int port_screen, const char* ip) : _port_data(port_data), _port_screen(port_screen), _ip(ip), _sock_data(INVALID_SOCKET), _sock_screen(INVALID_SOCKET), _ScreenshotManagerPtr(new ScreenshotManager())
+    NetworkManager::NetworkManager(int port_data, int port_screen, const char* ip)
+        : _port_data(port_data),
+        _port_screen(port_screen),
+        _ip(ip),
+        _sock_data(INVALID_SOCKET),
+        _sock_screen(INVALID_SOCKET),
+        _ScreenshotManagerPtr(new ScreenshotManager())
     {
         WSADATA wsaData;
 
@@ -18,6 +22,8 @@ namespace Client
         _sock_screen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
         _tlsInitialized = false;
+        _screenTlsInitialized = false;
+
         ZeroMemory(&_credHandle, sizeof(_credHandle));
         ZeroMemory(&_contextHandle, sizeof(_contextHandle));
         ZeroMemory(&_streamSizes, sizeof(_streamSizes));
@@ -25,9 +31,8 @@ namespace Client
         ZeroMemory(&_screenCredHandle, sizeof(_screenCredHandle));
         ZeroMemory(&_screenContextHandle, sizeof(_screenContextHandle));
         ZeroMemory(&_screenStreamSizes, sizeof(_screenStreamSizes));
-        _screenTlsInitialized = false;
     }
-    
+
     NetworkManager::~NetworkManager()
     {
         if (_screenTlsInitialized)
@@ -55,18 +60,16 @@ namespace Client
         WSACleanup();
     }
 
-
-
     bool NetworkManager::ConnectData()
     {
-        struct sockaddr_in serverAddr;
+        sockaddr_in serverAddr;
 
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_port = htons(_port_data);
 
         inet_pton(AF_INET, _ip, &serverAddr.sin_addr);
 
-        if (connect(_sock_data, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
+        if (connect(_sock_data, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
         {
             return false;
         }
@@ -82,14 +85,14 @@ namespace Client
 
     bool NetworkManager::ConnectScreen()
     {
-        struct sockaddr_in serverAddr;
+        sockaddr_in serverAddr;
 
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_port = htons(_port_screen);
 
         inet_pton(AF_INET, _ip, &serverAddr.sin_addr);
 
-        if (connect(_sock_screen, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
+        if (connect(_sock_screen, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
         {
             return false;
         }
@@ -109,8 +112,6 @@ namespace Client
         return true;
     }
 
-
-
     void NetworkManager::WaitForScreenshotRequest()
     {
         while (true)
@@ -119,7 +120,9 @@ namespace Client
 
             if (!ReceiveTlsScreenData(message))
             {
-                std::cerr << "Ошибка получения TLS-запроса скриншота по порту: " << _port_screen << std::endl;
+                std::cerr << "Ошибка получения TLS-запроса скриншота по порту: "
+                    << _port_screen << std::endl;
+
                 is_connected = false;
                 break;
             }
@@ -138,24 +141,27 @@ namespace Client
         int width = 1920;
         int height = 1080;
 
-
         if (_sock_screen == INVALID_SOCKET)
         {
-            std::cerr << "Сокет по порту " << _port_screen <<" не валиден" << std::endl;
+            std::cerr << "Сокет по порту " << _port_screen << " не валиден" << std::endl;
             return;
         }
 
         try
         {
             size_t imageSize = vector.size();
-
             size_t totalDataSize = sizeof(width) + sizeof(height) + sizeof(imageSize) + imageSize;
+
             std::vector<char> buffer(totalDataSize);
 
             std::memcpy(buffer.data(), &width, sizeof(width));
             std::memcpy(buffer.data() + sizeof(width), &height, sizeof(height));
             std::memcpy(buffer.data() + sizeof(width) + sizeof(height), &imageSize, sizeof(imageSize));
-            std::memcpy(buffer.data() + sizeof(width) + sizeof(height) + sizeof(imageSize), vector.data(), imageSize);
+            std::memcpy(
+                buffer.data() + sizeof(width) + sizeof(height) + sizeof(imageSize),
+                vector.data(),
+                imageSize
+            );
 
             if (!SendTlsScreenBytes(buffer.data(), buffer.size()))
             {
@@ -168,7 +174,6 @@ namespace Client
             std::cerr << "Ошибка при отправке изображения: " << ex.what() << std::endl;
         }
     }
-
 
     void NetworkManager::SendData(const std::string& data) const
     {
@@ -304,6 +309,7 @@ namespace Client
             inBuffers[1].cbBuffer = 0;
 
             SecBufferDesc inBufferDesc;
+
             inBufferDesc.ulVersion = SECBUFFER_VERSION;
             inBufferDesc.cBuffers = 2;
             inBufferDesc.pBuffers = inBuffers;
@@ -424,6 +430,7 @@ namespace Client
         buffers[3].cbBuffer = 0;
 
         SecBufferDesc messageDesc;
+
         messageDesc.ulVersion = SECBUFFER_VERSION;
         messageDesc.cBuffers = 4;
         messageDesc.pBuffers = buffers;
@@ -456,7 +463,6 @@ namespace Client
         return sent != SOCKET_ERROR;
     }
 
-
     bool NetworkManager::ReceiveTlsScreenData(std::string& result)
     {
         result.clear();
@@ -477,7 +483,9 @@ namespace Client
         );
 
         if (received <= 0)
+        {
             return false;
+        }
 
         SecBuffer buffers[4];
 
@@ -498,6 +506,7 @@ namespace Client
         buffers[3].cbBuffer = 0;
 
         SecBufferDesc messageDesc;
+
         messageDesc.ulVersion = SECBUFFER_VERSION;
         messageDesc.cBuffers = 4;
         messageDesc.pBuffers = buffers;
@@ -580,6 +589,7 @@ namespace Client
             buffers[3].cbBuffer = 0;
 
             SecBufferDesc messageDesc;
+
             messageDesc.ulVersion = SECBUFFER_VERSION;
             messageDesc.cBuffers = 4;
             messageDesc.pBuffers = buffers;
@@ -614,7 +624,9 @@ namespace Client
                 );
 
                 if (sent == SOCKET_ERROR || sent == 0)
+                {
                     return false;
+                }
 
                 totalSent += sent;
             }

@@ -8,14 +8,15 @@ namespace WpfTcpServer
     {
         private readonly ClientInfo _client;
         private readonly WorkstationAnalyticsViewModel _analytics;
-
+        private readonly DatabaseManager _db;
 
         private DatePicker _startDatePicker;
         private DatePicker _endDatePicker;
 
-        private readonly DatabaseManager _db;
-
-        public AnalyticsWindow(ClientInfo client, WorkstationAnalyticsViewModel analytics, DatabaseManager db)
+        public AnalyticsWindow(
+            ClientInfo client,
+            WorkstationAnalyticsViewModel analytics,
+            DatabaseManager db)
         {
             _client = client;
             _analytics = analytics;
@@ -52,7 +53,6 @@ namespace WpfTcpServer
             });
 
             root.Children.Add(CreateReportPanel());
-
             root.Children.Add(CreateSummaryGrid());
 
             root.Children.Add(CreateSectionTitle("Соотношение активности и простоя"));

@@ -1,30 +1,24 @@
 #pragma once
+
 #include <vector>
 #include <objidl.h>
 #include <GdiPlus.h>
 
-
 #pragma comment(lib, "GdiPlus.lib")
-
-
 
 namespace Client
 {
+    class ScreenshotManager
+    {
+    public:
+        ScreenshotManager();
+        ~ScreenshotManager();
 
-	class ScreenshotManager
-	{
-	public:
+        const std::vector<uint8_t> CaptureScreenshot();
 
-		ScreenshotManager();
+    private:
+        int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 
-		~ScreenshotManager();
-
-		const std::vector<uint8_t> CaptureScreenshot();
-
-	private:
-
-		int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
-
-		ULONG_PTR _gdiplusToken;
-	};
+        ULONG_PTR _gdiplusToken;
+    };
 }
