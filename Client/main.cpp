@@ -1,29 +1,123 @@
 #include "MainClient.hpp"
 
+#include <fstream>
+#include <string>
+#include <unordered_map>
 
-// tcp-порты
-#define PORT_DATA 1337
-#define PORT_SCREEN 1338
-// ip сервера
-#define SERVER_IP "10.66.66.2"
+namespace
+{
+    constexpr const char* CONFIG_FILE_PATH = "client_config.ini";
+    constexpr const char* DEFAULT_SERVER_IP = "127.0.0.1";
 
+    constexpr int DEFAULT_DATA_PORT = 1337;
+    constexpr int DEFAULT_SCREEN_PORT = 1338;
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-//
+    constexpr const char* SERVER_IP_KEY = "server_ip";
+    constexpr const char* DATA_PORT_KEY = "data_port";
+    constexpr const char* SCREEN_PORT_KEY = "screen_port";
+
+    std::unordered_map<std::string, std::string> LoadConfig(const std::string& path)
+    {
+        std::unordered_map<std::string, std::string> config;
+        std::ifstream file(path);
+
+        if (!file.is_open())
+        {
+            return config;
+        }
+
+        std::string line;
+
+        while (std::getline(file, line))
+        {
+            const size_t separatorPosition = line.find('=');
+
+            if (separatorPosition == std::string::npos)
+            {
+                continue;
+            }
+
+            const std::string key = line.substr(0, separatorPosition);
+            const std::string value = line.substr(separatorPosition + 1);
+
+            config[key] = value;
+        }
+
+        return config;
+    }
+
+    int GetConfigIntValue(
+        const std::unordered_map<std::string, std::string>& config,
+        const std::string& key,
+        int defaultValue)
+    {
+        const auto iterator = config.find(key);
+
+        if (iterator == config.end())
+        {
+            return defaultValue;
+        }
+
+        return std::stoi(iterator->second);
+    }
+
+    std::string GetConfigStringValue(
+        const std::unordered_map<std::string, std::string>& config,
+        const std::string& key,
+        const std::string& defaultValue)
+    {
+        const auto iterator = config.find(key);
+
+        if (iterator == config.end())
+        {
+            return defaultValue;
+        }
+
+        return iterator->second;
+    }
+}
+
 //	Если необходимо включить отображение консоли для отладки, необходимо строку 
 //	int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 //	поменять на int main()
 //	Затем выбрать Client -> Свойства -> Компоновщик -> Система -> Подсистема
 //	Параметр Windows (/SUBSYSTEM:WINDOWS) 
 //	Поменять на Консоль (/SUBSYSTEM:CONSOLE)
-//	
 _Use_decl_annotations_
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+int APIENTRY WinMain(
+    HINSTANCE hInstance,
+    HINSTANCE hPrevInstance,
+    LPSTR lpCmdLine,
+    int nCmdShow)
 {
-	while (true)
-	{
-		Client::MainClient client(PORT_DATA, PORT_SCREEN, SERVER_IP);
+    const auto config = LoadConfig(CONFIG_FILE_PATH);
 
-		client.Start();
-	}
+    const std::string serverIp = GetConfigStringValue(
+        config,
+        SERVER_IP_KEY,
+        DEFAULT_SERVER_IP
+    );
+
+    const int dataPort = GetConfigIntValue(
+        config,
+        DATA_PORT_KEY,
+        DEFAULT_DATA_PORT
+    );
+
+    const int screenPort = GetConfigIntValue(
+        config,
+        SCREEN_PORT_KEY,
+        DEFAULT_SCREEN_PORT
+    );
+
+    while (true)
+    {
+        Client::MainClient client(
+            dataPort,
+            screenPort,
+            serverIp.c_str()
+        );
+
+        client.Start();
+    }
 }
