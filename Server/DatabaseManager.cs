@@ -38,7 +38,8 @@ namespace WpfTcpServer
 
         public DatabaseManager()
         {
-            _connectionString = "Host=localhost;Port=5432;Database=1984;Username=postgres;Password=12345678;Pooling=true;";
+            ServerConfig config = ServerConfig.Load();
+            _connectionString = config.GetRequiredString("database_connection_string");
         }
 
         public async Task<int> AddOrUpdateWorkstationAsync(ClientInfo client)
