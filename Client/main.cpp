@@ -3,6 +3,8 @@
 #include <fstream>
 #include <string>
 #include <unordered_map>
+#include <filesystem>
+#include <stdexcept>
 
 namespace
 {
@@ -16,9 +18,44 @@ namespace
     constexpr const char* DATA_PORT_KEY = "data_port";
     constexpr const char* SCREEN_PORT_KEY = "screen_port";
 
-    std::unordered_map<std::string, std::string> LoadConfig(const std::string& path)
+    std::filesystem::path FindClientConfigFile(const std::string& fileName)
+    {
+        std::filesystem::path currentPath = std::filesystem::current_path();
+
+        while (!currentPath.empty())
+        {
+            std::filesystem::path directCandidate = currentPath / fileName;
+
+            if (std::filesystem::exists(directCandidate))
+            {
+                return directCandidate;
+            }
+
+            std::filesystem::path clientCandidate = currentPath / "Client" / fileName;
+
+            if (std::filesystem::exists(clientCandidate))
+            {
+                return clientCandidate;
+            }
+
+            std::filesystem::path parentPath = currentPath.parent_path();
+
+            if (parentPath == currentPath)
+            {
+                break;
+            }
+
+            currentPath = parentPath;
+        }
+
+        throw std::runtime_error("Файл конфигурации клиента не найден: " + fileName);
+    }
+
+    std::unordered_map<std::string, std::string> LoadConfig(
+        const std::filesystem::path& path)
     {
         std::unordered_map<std::string, std::string> config;
+
         std::ifstream file(path);
 
         if (!file.is_open())
@@ -30,15 +67,13 @@ namespace
 
         while (std::getline(file, line))
         {
-            const size_t separatorPosition = line.find('=');
+            size_t pos = line.find('=');
 
-            if (separatorPosition == std::string::npos)
-            {
+            if (pos == std::string::npos)
                 continue;
-            }
 
-            const std::string key = line.substr(0, separatorPosition);
-            const std::string value = line.substr(separatorPosition + 1);
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
 
             config[key] = value;
         }
@@ -90,7 +125,8 @@ int APIENTRY WinMain(
     LPSTR lpCmdLine,
     int nCmdShow)
 {
-    const auto config = LoadConfig(CONFIG_FILE_PATH);
+    const std::filesystem::path configPath = FindClientConfigFile(CONFIG_FILE_PATH);
+    const auto config = LoadConfig(configPath);
 
     const std::string serverIp = GetConfigStringValue(
         config,

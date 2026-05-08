@@ -42,11 +42,24 @@ namespace WpfTcpServer
         private TcpListener? ListenerData;
         private TcpListener? ListenerScreen;
 
-        private X509Certificate2 _serverCertificate = new X509Certificate2(@"C:\certs\server.pfx", "12345678");
+        private readonly X509Certificate2 _serverCertificate;
 
         public MainWindow()
         {
             InitializeComponent();
+
+            ServerConfig config = ServerConfig.Load();
+
+            string certificatePath = config.GetRequiredString("certificate_path");
+            string certificatePassword = config.GetRequiredString("certificate_password");
+
+            int dataPort = config.GetRequiredInt("data_port");
+            int screenPort = config.GetRequiredInt("screen_port");
+
+            _serverCertificate = new X509Certificate2(
+                certificatePath,
+                certificatePassword
+            );
 
             ClientsListView.ItemsSource = _clients;
             ApplicationRulesDataGrid.ItemsSource = _applicationRules;
@@ -57,7 +70,7 @@ namespace WpfTcpServer
 
             _ = LoadRulesAsync();
 
-            StartServer(1337, 1338);
+            StartServer(dataPort, screenPort);
         }
 
         private void StartServer(int portData, int portScreen)

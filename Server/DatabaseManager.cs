@@ -39,7 +39,10 @@ namespace WpfTcpServer
         public DatabaseManager()
         {
             ServerConfig config = ServerConfig.Load();
-            _connectionString = config.GetRequiredString("database_connection_string");
+
+            _connectionString = config.GetRequiredString(
+                "database_connection_string"
+            );
         }
 
         public async Task<int> AddOrUpdateWorkstationAsync(ClientInfo client)

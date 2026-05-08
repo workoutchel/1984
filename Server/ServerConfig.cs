@@ -6,18 +6,13 @@ namespace WpfTcpServer
     {
         private readonly Dictionary<string, string> _values = new();
 
-        public static ServerConfig Load(string path = "ConnectionString.ini")
+        public static ServerConfig Load(string fileName = "server_config.ini")
         {
-            if (!File.Exists(path))
-            {
-                throw new FileNotFoundException(
-                    $"Файл конфигурации сервера не найден: {path}"
-                );
-            }
+            string configPath = FindConfigFile(fileName);
 
             var config = new ServerConfig();
 
-            foreach (string line in File.ReadAllLines(path))
+            foreach (string line in File.ReadAllLines(configPath))
             {
                 string trimmedLine = line.Trim();
 
@@ -58,6 +53,41 @@ namespace WpfTcpServer
             }
 
             return value;
+        }
+
+        private static string FindConfigFile(string fileName)
+        {
+            string? currentDirectory = AppContext.BaseDirectory;
+
+            while (!string.IsNullOrWhiteSpace(currentDirectory))
+            {
+                string candidatePath = Path.Combine(currentDirectory, fileName);
+
+                if (File.Exists(candidatePath))
+                {
+                    return candidatePath;
+                }
+
+                currentDirectory = Directory.GetParent(currentDirectory)?.FullName;
+            }
+
+            throw new FileNotFoundException(
+                $"Файл конфигурации сервера не найден: {fileName}"
+            );
+        }
+
+        public int GetRequiredInt(string key)
+        {
+            string value = GetRequiredString(key);
+
+            if (!int.TryParse(value, out int result))
+            {
+                throw new InvalidOperationException(
+                    $"Параметр конфигурации должен быть целым числом: {key}"
+                );
+            }
+
+            return result;
         }
     }
 }
